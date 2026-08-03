@@ -1,0 +1,117 @@
+/* ============================================================
+   SUBU-TETRA HMT — Global Design System
+   ============================================================ */
+
+:root {
+  /* Core palette — daha açık tonlar */
+  --bg-deep:       #0f1623;
+  --bg-base:       #141c2e;
+  --bg-surface:    #1a2540;
+  --bg-card:       rgba(26, 37, 64, 0.7);
+  --bg-card-hover: rgba(30, 44, 75, 0.85);
+
+  /* Accent colours */
+  --accent:        #00e5a0;
+  --accent-glow:   rgba(0, 229, 160, 0.35);
+  --accent-dim:    rgba(0, 229, 160, 0.12);
+  --accent-blue:   #3b82f6;
+  --accent-blue-glow: rgba(59, 130, 246, 0.3);
+  --accent-amber:  #f59e0b;
+  --accent-red:    #ef4444;
+  --accent-purple: #a855f7;
+
+  /* Text — daha parlak */
+  --text-primary:   #edf2f7;
+  --text-secondary: #a0aec0;
+  --text-muted:     #718096;
+
+  /* Borders — biraz daha belirgin */
+  --border:        rgba(160, 174, 192, 0.12);
+  --border-accent: rgba(0, 229, 160, 0.2);
+
+  /* Shadows & Glows */
+  --shadow-card:   0 4px 24px rgba(0, 0, 0, 0.3);
+  --shadow-glow:   0 0 30px var(--accent-glow);
+  --shadow-blue:   0 0 20px var(--accent-blue-glow);
+
+  /* Typography */
+  --font-sans:  'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono:  'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  /* Sizing */
+  --sidebar-width: 250px;
+  --header-height: 64px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* Transitions */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 0.2s;
+  --duration-med:  0.35s;
+  --duration-slow: 0.6s;
+}
+
+/* ---------- Reset & Base ---------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+}
+
+/* ---------- Scrollbar ---------- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* ---------- Keyframe Animations ---------- */
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.5); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 15px var(--accent-glow); }
+  50% { box-shadow: 0 0 35px var(--accent-glow), 0 0 60px rgba(0,229,160,0.12); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ---------- Utility Classes ---------- */
+.text-accent  { color: var(--accent) !important; }
+.text-blue    { color: var(--accent-blue) !important; }
+.text-amber   { color: var(--accent-amber) !important; }
+.text-red     { color: var(--accent-red) !important; }
+.text-purple  { color: var(--accent-purple) !important; }
+.text-muted   { color: var(--text-muted) !important; }
+.font-mono    { font-family: var(--font-mono) !important; }

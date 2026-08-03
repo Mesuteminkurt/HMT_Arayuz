@@ -1,0 +1,402 @@
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const mqtt = require('mqtt');
+require('dotenv').config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// CSV kayıt dizini
+const csvDir = path.join(__dirname, 'csv_records');
+if (!fs.existsSync(csvDir)) {
+    fs.mkdirSync(csvDir, { recursive: true });
+}
+
+// Kayıt durumu
+let isRecording = false;
+let recordingStartTime = null;
+let currentCsvPath = null;
+let recordCount = 0;
+
+// Tüm telemetri alanları için CSV header
+const CSV_HEADERS = [
+    'Tarih',
+    'Zaman',
+    'Hiz_kmh',
+    'Bat_Sicaklik_C',
+    'Bat_Voltaj_V',
+    'Enerji_Wh',
+    'Tank_Sicaklik_C'
+];
+
+// Simüle edilmiş canlı veriler
+let currentData = {
+    bat_v: 96.5, bat_a: 12.4, soc: 88,
+    speed: 42, tank_temp: 22, energy: 2000.0, time: "",
+    // Uyarı alanları
+    bms_spi: 0,         // 0 = haberleşme var, 1 = haberleşme yok
+    motor_contact: 0,   // 1 = kontak açıldı, 0 = kontak kapalı
+    // 32 adet hücre gerilimi
+    cell_v_1: 3.65, cell_v_2: 3.67, cell_v_3: 3.64, cell_v_4: 3.66,
+    cell_v_5: 3.68, cell_v_6: 3.63, cell_v_7: 3.65, cell_v_8: 3.67,
+    cell_v_9: 3.64, cell_v_10: 3.66, cell_v_11: 3.68, cell_v_12: 3.63,
+    cell_v_13: 3.65, cell_v_14: 3.67, cell_v_15: 3.64, cell_v_16: 3.66,
+    cell_v_17: 3.68, cell_v_18: 3.63, cell_v_19: 3.65, cell_v_20: 3.67,
+    cell_v_21: 3.64, cell_v_22: 0, cell_v_23: 0, cell_v_24: 0,
+    cell_v_25: 0, cell_v_26: 0, cell_v_27: 0, cell_v_28: 0,
+    cell_v_29: 0, cell_v_30: 0, cell_v_31: 0, cell_v_32: 0
+};
+
+// ============================================================
+// MQTT BAĞLANTISI (shiftr.io)
+// ============================================================
+let mqttConnected = false;
+let mqttLastMessage = null;
+let dataSource = 'simulation'; // 'mqtt' veya 'simulation'
+
+const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://subutetrahmt.cloud.shiftr.io:1883';
+const MQTT_USERNAME = process.env.MQTT_USERNAME || 'subutetrahmt';
+const MQTT_PASSWORD = process.env.MQTT_PASSWORD;
+// İki topic'i de dinlemek için (telemetri ana verileri ve hücreler)
+const MQTT_TOPICS = ['hmt_telemetry', 'hmt_cells'];
+
+let mqttClient = null;
+
+if (MQTT_PASSWORD) {
+    console.log(`🔌 MQTT broker'a bağlanılıyor: ${MQTT_BROKER}`);
+    
+    mqttClient = mqtt.connect(MQTT_BROKER, {
+        username: MQTT_USERNAME,
+        password: MQTT_PASSWORD,
+        clientId: `hmt-backend-${Date.now()}`,
+        reconnectPeriod: 5000,
+        connectTimeout: 10000
+    });
+
+    mqttClient.on('connect', () => {
+        mqttConnected = true;
+        dataSource = 'mqtt';
+        console.log(`✅ shiftr.io MQTT bağlantısı kuruldu!`);
+        console.log(`📡 Topic dinleniyor: ${MQTT_TOPICS.join(', ')}`);
+        mqttClient.subscribe(MQTT_TOPICS, { qos: 0 }, (err) => {
+            if (err) console.error('❌ Subscribe hatası:', err);
+        });
+    });
+
+    mqttClient.on('message', (topic, message) => {
+        try {
+            // STM32'den tek tırnaklı (') gelebilir, JSON formatı çift tırnak (") gerektirir
+            const msgStr = message.toString().replace(/'/g, '"');
+            const data = JSON.parse(msgStr);
+            mqttLastMessage = new Date();
+            
+            // Gelen veriyi currentData'ya aktar
+            Object.keys(data).forEach(key => {
+                // STM32'den "c1", "c2" gibi gelen hücre verilerini "cell_v_1" formatına çevir
+                if (key.startsWith('c') && !isNaN(key.substring(1))) {
+                    const cellIndex = key.substring(1);
+                    currentData[`cell_v_${cellIndex}`] = data[key];
+                } else {
+                    currentData[key] = data[key];
+                }
+            });
+            
+            // Zamanı güncelle
+            currentData.time = new Date().toLocaleTimeString('tr-TR');
+
+            console.log(`📨 MQTT veri alındı: speed=${data.speed || '-'}, bat_v=${data.bat_v || '-'}, soc=${data.soc || '-'}`);
+        } catch (err) {
+            console.error('❌ MQTT mesaj parse hatası:', err.message);
+        }
+    });
+
+    mqttClient.on('error', (err) => {
+        console.error('❌ MQTT bağlantı hatası:', err.message);
+    });
+
+    mqttClient.on('offline', () => {
+        mqttConnected = false;
+        dataSource = 'simulation';
+        console.log('⚠️ MQTT bağlantısı kesildi, simülasyon moduna geçildi');
+    });
+
+    mqttClient.on('reconnect', () => {
+        console.log('🔄 MQTT yeniden bağlanılıyor...');
+    });
+} else {
+    console.log('⚠️ MQTT_PASSWORD tanımlı değil, simülasyon modunda çalışılıyor');
+}
+
+// ============================================================
+// SİMÜLASYON (MQTT bağlı değilken yedek veri üretir)
+// ============================================================
+setInterval(() => {
+    const now = new Date();
+    currentData.time = now.toLocaleTimeString('tr-TR');
+
+    // MQTT bağlıysa simülasyon yapma, gerçek veriyi kullan
+    if (dataSource === 'mqtt' && mqttConnected) {
+        // Sadece CSV kaydı yap (gerçek MQTT verisiyle)
+    } else {
+        // Simülasyon modunda veri üret
+        currentData.speed = (Math.random() * 5 + 40).toFixed(1);
+        currentData.bat_v = (85 + Math.random() * 3).toFixed(1);
+        currentData.bat_a = (10 + Math.random() * 5).toFixed(1);
+        currentData.soc = Math.max(0, Math.min(100, Number(currentData.soc) - Math.random() * 0.1)).toFixed(0);
+        currentData.tank_temp = (21 + Math.random() * 2).toFixed(1);
+        currentData.energy = (Number(currentData.energy) - Math.random() * 0.5).toFixed(1);
+        currentData.bms_spi = 0;
+        currentData.motor_contact = 0;
+
+        for (let i = 1; i <= 21; i++) {
+            currentData[`cell_v_${i}`] = (3.55 + Math.random() * 0.2).toFixed(3);
+        }
+    }
+
+    // Kayıt aktifse CSV'ye yaz
+    if (isRecording && currentCsvPath) {
+        const timeWithMs = `${now.toLocaleTimeString('tr-TR')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+        const formatDec = (val) => String(val).replace('.', ',');
+
+        const row = [
+            now.toLocaleDateString('tr-TR'),
+            timeWithMs,
+            formatDec(currentData.speed),
+            formatDec(currentData.bat_temp),
+            formatDec(currentData.bat_v),
+            formatDec((currentData.soc / 100 * 2840).toFixed(0)),
+            formatDec(currentData.tank_temp)
+        ].join(';');
+
+        fs.appendFileSync(currentCsvPath, row + '\n');
+        recordCount++;
+    }
+}, 2000);
+
+// Telemetri verileri
+app.get('/api/telemetry', (req, res) => res.json({
+    ...currentData,
+    _source: dataSource,
+    _mqttConnected: mqttConnected
+}));
+
+// MQTT bağlantı durumu
+app.get('/api/mqtt-status', (req, res) => {
+    res.json({
+        connected: mqttConnected,
+        source: dataSource,
+        broker: MQTT_BROKER,
+        topic: MQTT_TOPIC,
+        lastMessage: mqttLastMessage
+    });
+});
+
+// Kayıt durumu
+app.get('/api/recording-status', (req, res) => {
+    res.json({
+        isRecording,
+        recordCount,
+        startTime: recordingStartTime,
+        fileName: currentCsvPath ? path.basename(currentCsvPath) : null
+    });
+});
+
+// Kaydı başlat
+app.post('/api/recording/start', (req, res) => {
+    if (isRecording) {
+        return res.status(400).json({ error: 'Kayıt zaten devam ediyor' });
+    }
+
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const fileName = `telemetri_${timestamp}.csv`;
+    currentCsvPath = path.join(csvDir, fileName);
+    recordCount = 0;
+    recordingStartTime = now.toISOString();
+
+    // Header satırını yaz
+    // UTF-8 BOM + Header (Excel uyumluluğu için)
+    fs.writeFileSync(currentCsvPath, '\uFEFF' + CSV_HEADERS.join(';') + '\n');
+
+    isRecording = true;
+    res.json({
+        message: 'Kayıt başlatıldı',
+        fileName,
+        startTime: recordingStartTime
+    });
+});
+
+// Kaydı durdur
+app.post('/api/recording/stop', (req, res) => {
+    if (!isRecording) {
+        return res.status(400).json({ error: 'Aktif kayıt yok' });
+    }
+
+    isRecording = false;
+    const result = {
+        message: 'Kayıt durduruldu',
+        fileName: path.basename(currentCsvPath),
+        totalRecords: recordCount,
+        startTime: recordingStartTime,
+        endTime: new Date().toISOString()
+    };
+
+    recordingStartTime = null;
+    res.json(result);
+});
+
+// Kayıtlı CSV dosyalarını listele
+app.get('/api/recordings', (req, res) => {
+    try {
+        if (!fs.existsSync(csvDir)) {
+            return res.json({ files: [] });
+        }
+
+        const files = fs.readdirSync(csvDir)
+            .filter(f => f.endsWith('.csv'))
+            .map(f => {
+                const filePath = path.join(csvDir, f);
+                const stats = fs.statSync(filePath);
+                const content = fs.readFileSync(filePath, 'utf-8');
+                const lines = content.trim().split('\n').filter(l => l.trim());
+                const rowCount = Math.max(0, lines.length - 1); // header hariç
+
+                return {
+                    name: f,
+                    size: stats.size,
+                    sizeFormatted: formatFileSize(stats.size),
+                    createdAt: stats.birthtime,
+                    rowCount
+                };
+            })
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+        res.json({ files });
+    } catch (e) {
+        res.json({ files: [] });
+    }
+});
+
+// CSV dosyasını indir
+app.get('/api/download-recording', (req, res) => {
+    const fileName = req.query.file;
+    if (!fileName) return res.status(400).json({ error: 'Dosya adı belirtilmedi' });
+
+    const filePath = path.join(csvDir, fileName);
+    if (fs.existsSync(filePath)) {
+        res.download(filePath, fileName, (err) => {
+            if (err && !res.headersSent) {
+                res.status(500).json({ error: 'Dosya indirilirken bir hata oluştu' });
+            }
+        });
+    } else {
+        res.status(404).json({ error: 'CSV dosyası bulunamadı' });
+    }
+});
+
+// Belirli bir CSV dosyasının son satırlarını getir
+app.get('/api/recording-preview', (req, res) => {
+    try {
+        const fileName = req.query.file;
+        if (!fileName) return res.status(400).json({ error: 'Dosya adı belirtilmedi' });
+
+        const filePath = path.join(csvDir, fileName);
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: 'Dosya bulunamadı' });
+        }
+
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // BOM karakterini temizle
+        const cleanContent = content.replace(/^\uFEFF/, '');
+        const lines = cleanContent.trim().split('\n').filter(l => l.trim());
+
+        if (lines.length === 0) {
+            return res.json({ headers: [], rows: [], totalRows: 0 });
+        }
+
+        const headers = lines[0].split(';');
+        const dataLines = lines.slice(1);
+        const last100 = dataLines.slice(-100);
+        const rows = last100.map(line => {
+            const values = line.split(';');
+            const row = {};
+            headers.forEach((h, i) => { row[h] = values[i] || ''; });
+            return row;
+        });
+
+        res.json({ headers, rows, totalRows: dataLines.length });
+    } catch (e) {
+        res.status(500).json({ error: 'Dosya okunamadı' });
+    }
+});
+
+// Aktif kaydın canlı verilerini getir
+app.get('/api/recording/live-data', (req, res) => {
+    if (!isRecording || !currentCsvPath || !fs.existsSync(currentCsvPath)) {
+        return res.json({ headers: CSV_HEADERS, rows: [], totalRows: 0, isRecording: false });
+    }
+
+    try {
+        const content = fs.readFileSync(currentCsvPath, 'utf-8');
+        const cleanContent = content.replace(/^\uFEFF/, '');
+        const lines = cleanContent.trim().split('\n').filter(l => l.trim());
+        const headers = lines[0] ? lines[0].split(';') : CSV_HEADERS;
+        const dataLines = lines.slice(1);
+        const last50 = dataLines.slice(-50);
+        const rows = last50.map(line => {
+            const values = line.split(';');
+            const row = {};
+            headers.forEach((h, i) => { row[h] = values[i] || ''; });
+            return row;
+        });
+
+        res.json({ headers, rows, totalRows: dataLines.length, isRecording: true });
+    } catch (e) {
+        res.json({ headers: CSV_HEADERS, rows: [], totalRows: 0, isRecording });
+    }
+});
+
+// CSV dosyasını sil
+app.delete('/api/delete-recording', (req, res) => {
+    const fileName = req.query.file;
+    if (!fileName) return res.status(400).json({ error: 'Dosya adı belirtilmedi' });
+
+    const filePath = path.join(csvDir, fileName);
+
+    // Aktif kayıt dosyasını silmeye çalışıyorsa engelle
+    if (isRecording && currentCsvPath === filePath) {
+        return res.status(400).json({ error: 'Aktif kayıt dosyası silinemez. Önce kaydı durdurun.' });
+    }
+
+    if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        res.json({ message: 'Dosya silindi' });
+    } else {
+        res.status(404).json({ error: 'Dosya bulunamadı' });
+    }
+});
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Serve static frontend files (if frontend is built into public folder)
+const publicDir = path.join(__dirname, 'public');
+if (fs.existsSync(publicDir)) {
+    app.use(express.static(publicDir));
+    // Catch-all route to serve index.html for Vue/Vite routing
+    app.get('*', (req, res) => {
+        // Exclude API routes from catch-all
+        if (!req.path.startsWith('/api/')) {
+            res.sendFile(path.join(publicDir, 'index.html'));
+        }
+    });
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Backend ${PORT} portunda çalışıyor.`));
