@@ -1,7 +1,7 @@
 node_modules/
 .env
 dist/
-public/
+backend/public/
 csv_records/
 *.csv
 .DS_Store
