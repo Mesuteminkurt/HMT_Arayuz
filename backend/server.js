@@ -390,10 +390,12 @@ const publicDir = path.join(__dirname, 'public');
 if (fs.existsSync(publicDir)) {
     app.use(express.static(publicDir));
     // Catch-all route to serve index.html for Vue/Vite routing
-    app.get('*', (req, res) => {
+    app.get(/.*/, (req, res) => {
         // Exclude API routes from catch-all
         if (!req.path.startsWith('/api/')) {
             res.sendFile(path.join(publicDir, 'index.html'));
+        } else {
+            res.status(404).json({ error: 'API route not found' });
         }
     });
 }
