@@ -57,9 +57,9 @@ let mqttConnected = false;
 let mqttLastMessage = null;
 let dataSource = 'simulation'; // 'mqtt' veya 'simulation'
 
-const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://subutetrahmt2.cloud.shiftr.io:1883';
-const MQTT_USERNAME = process.env.MQTT_USERNAME || 'subutetrahmt2';
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD || 'pPXOqugkEF24x0dH';
+const MQTT_BROKER = 'mqtt://subutetrahmt2.cloud.shiftr.io:1883';
+const MQTT_USERNAME = 'subutetrahmt2';
+const MQTT_PASSWORD = 'pPXOqugkEF24x0dH';
 // İki topic'i de dinlemek için (telemetri ana verileri ve hücreler)
 const MQTT_TOPICS = ['hmt_telemetry', 'hmt_cells'];
 
