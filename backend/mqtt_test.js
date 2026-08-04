@@ -1,7 +1,7 @@
 const mqtt = require('mqtt');
 
-const client = mqtt.connect('mqtt://subutetrahmt.cloud.shiftr.io:1883', {
-    username: 'subutetrahmt',
+const client = mqtt.connect('mqtt://subutetrahmt2.cloud.shiftr.io:1883', {
+    username: 'subutetrahmt2',
     password: 'pPXOqugkEF24x0dH'
 });
 

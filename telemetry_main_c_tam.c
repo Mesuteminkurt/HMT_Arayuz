@@ -153,7 +153,7 @@ void Parse_VCU_CSV(char *line) {
         tok = strtok(NULL, ",\n\r");
     }
 
-    if (field >= 35) vcu_receiving = 1;
+    if (field >= 10) vcu_receiving = 1;
 }
 
 static int fmt_div10(char *buf, int16_t val) {
@@ -168,14 +168,12 @@ static int fmt_div10(char *buf, int16_t val) {
     }
 }
 
-// 1. TEMEL ARAÇ VERİLERİ VE SICAKLIKLAR (AT komut buffer sınırı içinde)
-int Build_JSON_Main(char *buf, int bufsize) {
+// 1. TEMEL ARAÇ VERİLERİ (Part 1 - AT komut sinirini asmamak icin)
+int Build_JSON_Main_1(char *buf, int bufsize) {
     int pos = 0;
     char tmp[16];
 
     pos += snprintf(&buf[pos], bufsize - pos, "{");
-
-    // Tek tırnak (') kullanımı: AT komut formatını korumak için
     pos += snprintf(&buf[pos], bufsize - pos, "'speed':%d", t_speed);
 
     fmt_div10(tmp, (int16_t)t_bat_v);
@@ -193,7 +191,7 @@ int Build_JSON_Main(char *buf, int bufsize) {
     pos += snprintf(&buf[pos], bufsize - pos, ",'bms_spi':%d", t_bms_spi);
     pos += snprintf(&buf[pos], bufsize - pos, ",'motor_contact':%d", t_motor_contact);
 
-    // Max batarya sicakligini bul (Arayüz "bat_temp" degerini buradan alıyor)
+    // Max batarya sicakligini bul
     int16_t max_temp = t_temps[0];
     for (int i = 1; i < 7; i++) {
         if (t_temps[i] > max_temp) max_temp = t_temps[i];
@@ -201,34 +199,56 @@ int Build_JSON_Main(char *buf, int bufsize) {
     fmt_div10(tmp, max_temp);
     pos += snprintf(&buf[pos], bufsize - pos, ",'bat_temp':%s", tmp);
 
-    // 7 Adet Sicakligi pakete ekliyoruz (Arayüzün beklediği isimlerle: bat_temp_1, vb.)
-    for (int i = 0; i < 7; i++) {
-        fmt_div10(tmp, t_temps[i]);
-        pos += snprintf(&buf[pos], bufsize - pos, ",'bat_temp_%d':%s", i + 1, tmp);
-    }
-
     fmt_div10(tmp, t_tank_temp);
     pos += snprintf(&buf[pos], bufsize - pos, ",'tank_temp':%s", tmp);
 
     pos += snprintf(&buf[pos], bufsize - pos, "}");
-
     return pos;
 }
 
-// 2. SADECE HÜCRE VOLTAJLARI (Vericideki 21 hucre ile senkronize edildi)
-int Build_JSON_Cells(char *buf, int bufsize) {
+// 1. TEMEL ARAÇ VERİLERİ (Part 2 - Sadece ayri sicakliklar)
+int Build_JSON_Main_2(char *buf, int bufsize) {
+    int pos = 0;
+    char tmp[16];
+
+    pos += snprintf(&buf[pos], bufsize - pos, "{");
+    for (int i = 0; i < 7; i++) {
+        fmt_div10(tmp, t_temps[i]);
+        if (i == 0) pos += snprintf(&buf[pos], bufsize - pos, "'bat_temp_%d':%s", i + 1, tmp);
+        else pos += snprintf(&buf[pos], bufsize - pos, ",'bat_temp_%d':%s", i + 1, tmp);
+    }
+    pos += snprintf(&buf[pos], bufsize - pos, "}");
+    return pos;
+}
+
+// 2. HÜCRE VOLTAJLARI (Part 1: 1-11)
+int Build_JSON_Cells_1(char *buf, int bufsize) {
     int pos = 0;
     pos += snprintf(&buf[pos], bufsize - pos, "{");
 
-    // 32 yerine vericiden gelen 21 hücre voltajini gonderiyoruz
-    for (int i = 0; i < 21; i++) {
+    for (int i = 0; i < 11; i++) {
         if (i == 0) {
             pos += snprintf(&buf[pos], bufsize - pos, "'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
         } else {
             pos += snprintf(&buf[pos], bufsize - pos, ",'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
         }
     }
+    pos += snprintf(&buf[pos], bufsize - pos, "}");
+    return pos;
+}
 
+// 2. HÜCRE VOLTAJLARI (Part 2: 12-21)
+int Build_JSON_Cells_2(char *buf, int bufsize) {
+    int pos = 0;
+    pos += snprintf(&buf[pos], bufsize - pos, "{");
+
+    for (int i = 11; i < 21; i++) {
+        if (i == 11) {
+            pos += snprintf(&buf[pos], bufsize - pos, "'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
+        } else {
+            pos += snprintf(&buf[pos], bufsize - pos, ",'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
+        }
+    }
     pos += snprintf(&buf[pos], bufsize - pos, "}");
     return pos;
 }
@@ -323,17 +343,22 @@ int main(void)
   {
       if (publish_flag) {
           publish_flag = 0;
+          int len;
 
-          // 1. Ana verileri "hmt_telemetry" topic'ine gönder
-          int len_main = Build_JSON_Main(json_buf, JSON_BUF_SIZE);
-          Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len_main);
+          len = Build_JSON_Main_1(json_buf, JSON_BUF_SIZE);
+          Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
+          HAL_Delay(250);
 
-          // Modülün ilk komutu işleyebilmesi için bekleme süresi
-          HAL_Delay(600);
+          len = Build_JSON_Main_2(json_buf, JSON_BUF_SIZE);
+          Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
+          HAL_Delay(250);
 
-          // 2. Hücre voltajlarını "hmt_cells" topic'ine gönder
-          int len_cells = Build_JSON_Cells(json_buf, JSON_BUF_SIZE);
-          Cavli_Publish("hmt_cells", (uint8_t*)json_buf, len_cells);
+          len = Build_JSON_Cells_1(json_buf, JSON_BUF_SIZE);
+          Cavli_Publish("hmt_cells", (uint8_t*)json_buf, len);
+          HAL_Delay(250);
+
+          len = Build_JSON_Cells_2(json_buf, JSON_BUF_SIZE);
+          Cavli_Publish("hmt_cells", (uint8_t*)json_buf, len);
       }
     /* USER CODE END WHILE */
 
@@ -508,10 +533,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         if (hb_counter >= 1)
         {
             hb_counter = 0;
-            if (vcu_receiving == 1) {
-                // Sadece bayrağı set ediyoruz, bekletici işlem yok.
-                publish_flag = 1;
-            }
+            // VCU'dan veri gelip gelmediğine bakmaksızın ZORLA yolla
+            // EGER SHIFTR'DA 0 (SIFIR) VERILERI GORMEYE BASLARSAN, CAVLI SAGLAM, VCU HABERLESMESI KOPUK DEMEKTIR!
+            publish_flag = 1;
         }
     }
 }
