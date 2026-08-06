@@ -99,6 +99,9 @@ if (MQTT_PASSWORD) {
                 if (key.startsWith('c') && !isNaN(key.substring(1))) {
                     const cellIndex = key.substring(1);
                     currentData[`cell_v_${cellIndex}`] = data[key];
+                } else if (key === 'soc') {
+                    // SOC değeri 10x büyük geliyor (örn. 926 → 92.6)
+                    currentData.soc = (Number(data[key]) / 10).toFixed(1);
                 } else {
                     currentData[key] = data[key];
                 }
