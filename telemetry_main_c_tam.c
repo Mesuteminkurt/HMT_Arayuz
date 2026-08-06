@@ -2,7 +2,7 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body (Timer Interrupt Telemetry - Full Code)
+  * @brief          : UART DMA Alımı + JSON Gönderimi (Eksiksiz Tam Kod)
   ******************************************************************************
   * @attention
   *
@@ -47,50 +47,52 @@ TIM_HandleTypeDef htim1;
 
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart2_rx;
 
 /* USER CODE BEGIN PV */
 
 #define VCU_BUF_SIZE 512
 #define STATUS_BUF_SIZE 512
-#define JSON_BUF_SIZE 1024
 
 volatile uint8_t cavli_status[STATUS_BUF_SIZE];
 volatile uint16_t cavli_status_len;
-volatile uint8_t hb_counter = 0;
 
-uint8_t  vcu_rx_byte;
+// DMA için tamponlar
 char     vcu_rx_buf[VCU_BUF_SIZE];
-volatile uint16_t vcu_rx_idx = 0;
+char     vcu_rx_buf_process[VCU_BUF_SIZE];
+volatile uint8_t  vcu_line_ready = 0;
 
-// Gelen yeni 36 verili yapiya uygun degiskenler
+// --- VCU değişkenleri ---
 uint16_t t_speed = 0;
 uint16_t t_bat_v = 0;
 int16_t  t_bat_a = 0;
 uint16_t t_soc = 0;
 int32_t  t_energy = 0;
+
 uint8_t  t_bms_spi = 0;
 uint8_t  t_motor_contact = 0;
-int16_t  t_temps[7] = {0};    // 7 Adet Batarya Sicakligi
-uint16_t t_cells[21] = {0};   // 21 Adet Hucre Voltajı (Verici 21 tane atiyor)
+int16_t  t_temps[7] = {0};
+uint16_t t_cells[21] = {0};
 int16_t  t_tank_temp = 0;
 
-volatile uint8_t  vcu_receiving = 0;
-char json_buf[JSON_BUF_SIZE];
-volatile uint8_t publish_flag = 0;
+// İzolasyon Değerleri
+uint32_t t_iso_n = 0;
+uint32_t t_iso_p = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
-
 void Cavli_Send(char *msg);
 void Cavli_Publish(char *topic, uint8_t *data, uint16_t len);
 void Parse_VCU_CSV(char *line);
-
+static int fmt_div10(char *buf, int16_t val);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -105,55 +107,11 @@ void Cavli_Send(char *msg)
 void Cavli_Publish(char *topic, uint8_t *data, uint16_t len)
 {
     char header[96];
-
-    // Orijinal ve dogru olan yapi:
     int hlen = snprintf(header, sizeof(header), "AT+MQTTPUB=3,\"%s\",\"", topic);
+
     HAL_UART_Transmit(&huart3, (uint8_t*)header, hlen, 1000);
-
-    // Veriyi (data) gonderiyoruz
     HAL_UART_Transmit(&huart3, data, len, 2000);
-
-    // Mesaji kapatip zorunlu parametreleri (0,0,0) ekliyoruz
     HAL_UART_Transmit(&huart3, (uint8_t*)"\",0,0,0\r\n", 9, 100);
-}
-
-void Parse_VCU_CSV(char *line) {
-    char *tok;
-    int field = 0;
-
-    tok = strtok(line, ",");
-    while (tok != NULL && field < 40) {
-        int val = atoi(tok);
-
-        // 0-6: Temel Veriler
-        if (field == 0) t_speed = (uint16_t)val;
-        else if (field == 1) t_bat_v = (uint16_t)val;
-        else if (field == 2) t_bat_a = (int16_t)val;
-        else if (field == 3) t_soc = (uint16_t)val;
-        else if (field == 4) t_energy = (int32_t)val;
-        else if (field == 5) t_bms_spi = (uint8_t)val;
-        else if (field == 6) t_motor_contact = (uint8_t)val;
-
-        // 7-13: 7 Adet Sicaklik
-        else if (field >= 7 && field <= 13) {
-            t_temps[field - 7] = (int16_t)val;
-        }
-
-        // 14-34: 21 Adet Hucre Voltaji
-        else if (field >= 14 && field <= 34) {
-            t_cells[field - 14] = (uint16_t)val;
-        }
-
-        // 35: Tank Sicakligi
-        else if (field == 35) {
-            t_tank_temp = (int16_t)val;
-        }
-
-        field++;
-        tok = strtok(NULL, ",\n\r");
-    }
-
-    if (field >= 10) vcu_receiving = 1;
 }
 
 static int fmt_div10(char *buf, int16_t val) {
@@ -161,124 +119,68 @@ static int fmt_div10(char *buf, int16_t val) {
     int integer = absval / 10;
     int frac = absval % 10;
 
-    if (val < 0) {
-        return sprintf(buf, "-%d.%d", integer, frac);
-    } else {
-        return sprintf(buf, "%d.%d", integer, frac);
-    }
+    if (val < 0) return sprintf(buf, "-%d.%d", integer, frac);
+    else return sprintf(buf, "%d.%d", integer, frac);
 }
 
-// 1. TEMEL ARAÇ VERİLERİ (Part 1 - AT komut sinirini asmamak icin)
-int Build_JSON_Main_1(char *buf, int bufsize) {
-    int pos = 0;
-    char tmp[16];
+void Parse_VCU_CSV(char *line) {
+    int field = 0;
+    char *start = line;
+    char *end;
 
-    pos += snprintf(&buf[pos], bufsize - pos, "{");
-    pos += snprintf(&buf[pos], bufsize - pos, "'speed':%d", t_speed);
+    while (start != NULL && field < 40) {
+        end = strchr(start, ',');
+        if (end != NULL) {
+            *end = '\0';
+        }
 
-    fmt_div10(tmp, (int16_t)t_bat_v);
-    pos += snprintf(&buf[pos], bufsize - pos, ",'bat_v':%s", tmp);
+        long val = atol(start);
 
-    fmt_div10(tmp, t_bat_a);
-    pos += snprintf(&buf[pos], bufsize - pos, ",'bat_a':%s", tmp);
+        if (field == 0) t_speed = (uint16_t)val;
+        else if (field == 1) t_bat_v = (uint16_t)val;
+        else if (field == 2) t_bat_a = (int16_t)val;
+        else if (field == 3) t_soc = (uint16_t)val;
+        else if (field == 4) t_energy = (int32_t)val;
+        else if (field == 5) t_bms_spi = (uint8_t)val;
+        else if (field == 6) t_motor_contact = (uint8_t)val;
+        else if (field >= 7 && field <= 13) t_temps[field - 7] = (int16_t)val;
+        else if (field >= 14 && field <= 34) t_cells[field - 14] = (uint16_t)val;
+        else if (field == 35) t_tank_temp = (int16_t)val;
+        else if (field == 36) t_iso_n = (uint32_t)val;
+        else if (field == 37) t_iso_p = (uint32_t)val;
 
-    pos += snprintf(&buf[pos], bufsize - pos, ",'soc':%d", t_soc);
-
-    int e_int = (int)(t_energy / 10);
-    int e_frac = abs((int)(t_energy % 10));
-    pos += snprintf(&buf[pos], bufsize - pos, ",'energy':%d.%d", e_int, e_frac);
-
-    pos += snprintf(&buf[pos], bufsize - pos, ",'bms_spi':%d", t_bms_spi);
-    pos += snprintf(&buf[pos], bufsize - pos, ",'motor_contact':%d", t_motor_contact);
-
-    // Max batarya sicakligini bul
-    int16_t max_temp = t_temps[0];
-    for (int i = 1; i < 7; i++) {
-        if (t_temps[i] > max_temp) max_temp = t_temps[i];
-    }
-    fmt_div10(tmp, max_temp);
-    pos += snprintf(&buf[pos], bufsize - pos, ",'bat_temp':%s", tmp);
-
-    fmt_div10(tmp, t_tank_temp);
-    pos += snprintf(&buf[pos], bufsize - pos, ",'tank_temp':%s", tmp);
-
-    pos += snprintf(&buf[pos], bufsize - pos, "}");
-    return pos;
-}
-
-// 1. TEMEL ARAÇ VERİLERİ (Part 2 - Sadece ayri sicakliklar)
-int Build_JSON_Main_2(char *buf, int bufsize) {
-    int pos = 0;
-    char tmp[16];
-
-    pos += snprintf(&buf[pos], bufsize - pos, "{");
-    for (int i = 0; i < 7; i++) {
-        fmt_div10(tmp, t_temps[i]);
-        if (i == 0) pos += snprintf(&buf[pos], bufsize - pos, "'bat_temp_%d':%s", i + 1, tmp);
-        else pos += snprintf(&buf[pos], bufsize - pos, ",'bat_temp_%d':%s", i + 1, tmp);
-    }
-    pos += snprintf(&buf[pos], bufsize - pos, "}");
-    return pos;
-}
-
-// 2. HÜCRE VOLTAJLARI (Part 1: 1-11)
-int Build_JSON_Cells_1(char *buf, int bufsize) {
-    int pos = 0;
-    pos += snprintf(&buf[pos], bufsize - pos, "{");
-
-    for (int i = 0; i < 11; i++) {
-        if (i == 0) {
-            pos += snprintf(&buf[pos], bufsize - pos, "'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
+        if (end != NULL) {
+            start = end + 1;
         } else {
-            pos += snprintf(&buf[pos], bufsize - pos, ",'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
+            start = NULL;
         }
-    }
-    pos += snprintf(&buf[pos], bufsize - pos, "}");
-    return pos;
-}
-
-// 2. HÜCRE VOLTAJLARI (Part 2: 12-21)
-int Build_JSON_Cells_2(char *buf, int bufsize) {
-    int pos = 0;
-    pos += snprintf(&buf[pos], bufsize - pos, "{");
-
-    for (int i = 11; i < 21; i++) {
-        if (i == 11) {
-            pos += snprintf(&buf[pos], bufsize - pos, "'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
-        } else {
-            pos += snprintf(&buf[pos], bufsize - pos, ",'c%d':%d.%03d", i + 1, t_cells[i] / 1000, t_cells[i] % 1000);
-        }
-    }
-    pos += snprintf(&buf[pos], bufsize - pos, "}");
-    return pos;
-}
-
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART2)
-    {
-        if (vcu_rx_byte == '\n') {
-            vcu_rx_buf[vcu_rx_idx] = '\0';
-
-            Parse_VCU_CSV(vcu_rx_buf);
-
-            vcu_rx_idx = 0;
-        }
-        else if (vcu_rx_idx < VCU_BUF_SIZE - 2) {
-            if (vcu_rx_byte != '\r') {
-                vcu_rx_buf[vcu_rx_idx++] = vcu_rx_byte;
-            }
-        }
-        HAL_UART_Receive_IT(&huart2, &vcu_rx_byte, 1);
+        field++;
     }
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
-    if (huart->Instance == USART3)
+    // --- VCU DMA Kesmesi ---
+    if (huart->Instance == USART2)
+    {
+        // String güvenliği için null ekle
+        if (Size >= VCU_BUF_SIZE) Size = VCU_BUF_SIZE - 1;
+        vcu_rx_buf[Size] = '\0';
+
+        // Ana döngü müsaitse veriyi kopyala
+        if (vcu_line_ready == 0) {
+            strcpy(vcu_rx_buf_process, (char*)vcu_rx_buf);
+            vcu_line_ready = 1;
+        }
+
+        // DMA'yı bir sonraki paket için yeniden kur
+        HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t*)vcu_rx_buf, VCU_BUF_SIZE);
+    }
+    // --- Modem IT Kesmesi ---
+    else if (huart->Instance == USART3)
     {
         cavli_status_len = Size;
+        if (Size >= STATUS_BUF_SIZE) Size = STATUS_BUF_SIZE - 1;
         cavli_status[Size] = '\0';
 
         HAL_UARTEx_ReceiveToIdle_IT(&huart3, (uint8_t*)cavli_status, STATUS_BUF_SIZE);
@@ -293,6 +195,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -315,25 +218,30 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_TIM_Base_Start_IT(&htim1);
+  // 1. VCU UART (USART2) DMA BAŞLATMASI
+  HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t*)vcu_rx_buf, VCU_BUF_SIZE);
 
-  HAL_UART_Receive_IT(&huart2, &vcu_rx_byte, 1);
+  // 2. Modem UART (USART3) Kesme Başlatması
   HAL_UARTEx_ReceiveToIdle_IT(&huart3, (uint8_t*)cavli_status, STATUS_BUF_SIZE);
 
   HAL_GPIO_WritePin(GPIOA, PWR_Pin, 1);
   HAL_Delay(300);
+
   Cavli_Send("AT");                                HAL_Delay(500);
   Cavli_Send("ATE0");                              HAL_Delay(500);
   Cavli_Send("AT+CGDCONT=1,\"IP\",\"internet\"");  HAL_Delay(1000);
   Cavli_Send("AT+CGACT=1,1");                      HAL_Delay(3000);
-  Cavli_Send("AT+MQTTCREATE=\"subutetrahmt.cloud.shiftr.io\",1883,\"hmt_telemetry\",250,0,\"subutetrahmt\",\"pPXOqugkEF24x0dH\",3,0");
+  Cavli_Send("AT+MQTTCREATE=\"subutetrahmt2.cloud.shiftr.io\",1883,\"hmt_telemetry\",250,0,\"subutetrahmt2\",\"pPXOqugkEF24x0dH\",3,0");
   HAL_Delay(2000);
   Cavli_Send("AT+MQTTCONN=3,0");                   HAL_Delay(3000);
+
+  uint32_t last_send_time = HAL_GetTick();
 
   /* USER CODE END 2 */
 
@@ -341,25 +249,33 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      if (publish_flag) {
-          publish_flag = 0;
-          int len;
-
-          len = Build_JSON_Main_1(json_buf, JSON_BUF_SIZE);
-          Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
-          HAL_Delay(250);
-
-          len = Build_JSON_Main_2(json_buf, JSON_BUF_SIZE);
-          Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
-          HAL_Delay(250);
-
-          len = Build_JSON_Cells_1(json_buf, JSON_BUF_SIZE);
-          Cavli_Publish("hmt_cells", (uint8_t*)json_buf, len);
-          HAL_Delay(250);
-
-          len = Build_JSON_Cells_2(json_buf, JSON_BUF_SIZE);
-          Cavli_Publish("hmt_cells", (uint8_t*)json_buf, len);
+      // 1. ADIM: VCU'dan yeni veri geldi mi?
+      if (vcu_line_ready) {
+          Parse_VCU_CSV(vcu_rx_buf_process);
+          vcu_line_ready = 0;
       }
+
+      // 2. ADIM: 1500ms dolduysa JSON oluştur ve gönder
+      if (HAL_GetTick() - last_send_time >= 1500) {
+          last_send_time = HAL_GetTick();
+
+          char json_buf[192];
+          char tmp_v[16], tmp_a[16];
+
+          fmt_div10(tmp_v, (int16_t)t_bat_v);
+          fmt_div10(tmp_a, (int16_t)t_bat_a);
+
+          int e_int = (int)(t_energy / 10);
+          int e_frac = abs((int)(t_energy % 10));
+
+          int len = snprintf(json_buf, sizeof(json_buf),
+              "{'speed':%d,'bat_v':%s,'bat_a':%s,'soc':%d,'energy':%d.%d,'iso_n':%lu,'iso_p':%lu}",
+              t_speed, tmp_v, tmp_a, t_soc, e_int, e_frac,
+              (unsigned long)t_iso_n, (unsigned long)t_iso_p);
+
+          Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
+      }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -419,9 +335,17 @@ void SystemClock_Config(void)
   */
 static void MX_TIM1_Init(void)
 {
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 62499;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
@@ -444,6 +368,10 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
 }
 
 /**
@@ -453,8 +381,16 @@ static void MX_TIM1_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
+  huart2.Init.BaudRate = 921600;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -465,6 +401,10 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
 }
 
 /**
@@ -474,6 +414,14 @@ static void MX_USART2_UART_Init(void)
   */
 static void MX_USART3_UART_Init(void)
 {
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
   huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
@@ -486,6 +434,26 @@ static void MX_USART3_UART_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+
 }
 
 /**
@@ -496,6 +464,9 @@ static void MX_USART3_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOD_CLK_ENABLE();
@@ -521,22 +492,30 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(RST_GPIO_Port, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-    if (htim->Instance == TIM1)
-    {
-        hb_counter++;
-        if (hb_counter >= 1)
-        {
-            hb_counter = 0;
-            // VCU'dan veri gelip gelmediğine bakmaksızın ZORLA yolla
-            // EGER SHIFTR'DA 0 (SIFIR) VERILERI GORMEYE BASLARSAN, CAVLI SAGLAM, VCU HABERLESMESI KOPUK DEMEKTIR!
-            publish_flag = 1;
-        }
+    // Donanım bayraklarını zorla silerek sonsuz döngüleri engelle
+    __HAL_UART_CLEAR_OREFLAG(huart);
+    __HAL_UART_CLEAR_NEFLAG(huart);
+    __HAL_UART_CLEAR_FEFLAG(huart);
+    __HAL_UART_CLEAR_PEFLAG(huart);
+
+    HAL_UART_AbortReceive(huart);
+
+    // Kilitlenmiş işlemi yeniden başlat
+    if (huart->Instance == USART2) {
+        HAL_UARTEx_ReceiveToIdle_DMA(&huart2, (uint8_t*)vcu_rx_buf, VCU_BUF_SIZE);
+    }
+    else if (huart->Instance == USART3) {
+        HAL_UARTEx_ReceiveToIdle_IT(&huart3, (uint8_t*)cavli_status, STATUS_BUF_SIZE);
     }
 }
 
@@ -548,13 +527,27 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   */
 void Error_Handler(void)
 {
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
+  /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
