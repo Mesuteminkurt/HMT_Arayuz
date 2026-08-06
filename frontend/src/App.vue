@@ -74,8 +74,8 @@
               <span class="tele-label">{{ item.label }}</span>
             </div>
             <div v-if="item.isDual" class="tele-value font-mono" style="display: flex; align-items: baseline; gap: 16px; font-size: 1.6rem; white-space: nowrap;">
-              <span><span style="font-size: 0.55em; color: var(--text-muted); font-family: sans-serif; text-transform: lowercase; margin-right: 2px;">{{ item.label1 }}</span>{{ telemetry[item.key1] ?? '0.00' }}</span>
-              <span><span style="font-size: 0.55em; color: var(--text-muted); font-family: sans-serif; text-transform: lowercase; margin-right: 2px;">{{ item.label2 }}</span>{{ telemetry[item.key2] ?? '0.00' }}</span>
+              <span><span style="font-size: 0.55em; color: var(--text-muted); font-family: sans-serif; text-transform: lowercase; margin-right: 2px;">{{ item.label1 }}</span>{{ item.formatter ? item.formatter(telemetry[item.key1]) : (telemetry[item.key1] ?? '0.00') }}</span>
+              <span><span style="font-size: 0.55em; color: var(--text-muted); font-family: sans-serif; text-transform: lowercase; margin-right: 2px;">{{ item.label2 }}</span>{{ item.formatter ? item.formatter(telemetry[item.key2]) : (telemetry[item.key2] ?? '0.00') }}</span>
             </div>
             <div v-else class="tele-value font-mono">
               {{ telemetry[item.key] ?? '--' }}<small class="tele-unit">{{ item.unit }}</small>
@@ -374,13 +374,22 @@ const iconShield = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const iconCircle = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>';
 const iconBattery = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="16" height="10" rx="2"/><line x1="22" y1="11" x2="22" y2="13"/><line x1="7" y1="11" x2="11" y2="11"/><line x1="9" y1="9" x2="9" y2="13"/></svg>';
 
+// Direnç değerini okunabilir birime çevir (örn. 10000000 → "10 MΩ", 100000 → "100 kΩ")
+function formatResistance(val) {
+  const v = Number(val);
+  if (isNaN(v) || v === 0) return '0 Ω';
+  if (v >= 1000000) return (v / 1000000).toFixed(v % 1000000 === 0 ? 0 : 1) + ' MΩ';
+  if (v >= 1000) return (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1) + ' kΩ';
+  return v + ' Ω';
+}
+
 const cardItems = [
   { key:'bat_v', label:'Batarya Gerilimi', unit:'V', color:'#00e5a0', icon:iconBolt },
   { key:'bat_a', label:'Batarya Akımı', unit:'A', color:'#3b82f6', icon:iconCircle },
   { key:'energy', label:'Kalan Enerji', unit:'Wh', color:'#10b981', icon:iconBattery },
   { key:'mot_temp', label:'Motor Sıcaklığı', unit:'°C', color:'#f59e0b', icon:iconThermo },
   { key:'bat_temp', label:'Batarya Sıcaklığı (Max)', unit:'°C', color:'#ef4444', icon:iconThermo },
-  { key:'iso', label:'İzolasyon', color:'#a855f7', icon:iconShield, isDual: true, key1: 'iso_n', key2: 'iso_p', label1: 'n:', label2: 'p:' },
+  { key:'iso', label:'İzolasyon', color:'#a855f7', icon:iconShield, isDual: true, key1: 'iso_n', key2: 'iso_p', label1: 'n:', label2: 'p:', formatter: formatResistance },
   { key:'tank_temp', label:'Tank Sıcaklığı', unit:'°C', color:'#06b6d4', icon:iconThermo },
 ];
 
