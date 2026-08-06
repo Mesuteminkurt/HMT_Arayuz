@@ -49,12 +49,20 @@ volatile uint8_t  g_inverter_status = 0; // Inverter (Cikis) Durumu (1: Aktif, 0
 volatile uint16_t g_cell_voltages[32] = {0};
 volatile int16_t  g_temperatures[32] = {0};
 // CAN Baglantisi Koptu mu Kontrolu Icin Zaman Damgasi
-volatile uint32_t g_last_can_rx_ms = 0;
-volatile uint8_t  g_can_connected = 0;
+volatile uint32_t g_last_can_rx_ms_bms = 0;
+volatile uint8_t  g_can_connected_bms = 0;
 
+
+volatile uint32_t g_last_can_rx_ms_iso = 0;
+volatile uint8_t  g_can_connected_iso = 0;
 // --- Tank Sicakligi (sabit, ileride CAN'dan baglanacak) ---
 // Birim: 0.1°C (ornek: 250 = 25.0°C)
 volatile int16_t g_tank_temp = 250;
+
+
+// İzolasyon Değerleri (0x500)
+volatile uint32_t g_iso_n = 0;
+volatile uint32_t g_iso_p = 0;
 
 // --- Hiz Olcum Degiskenleri ---
 int Is_First_Captured = 0, Is_First_Captured2 = 0;
@@ -113,27 +121,25 @@ void Nextion_ChangePage(const char* page_name) {
 /**
   * @brief Telemetri kartina USART6 uzerinden CSV formatinda tum verileri gonderir
   *
-  * Format (36 alan, virgülle ayrılmış, '\n' ile biter):
+  * Format (38 alan, virgülle ayrılmış, '\n' ile biter):
   * speed,bat_v,bat_a,soc,energy,bms_spi,motor_contact,
   * temp1,temp2,temp3,temp4,temp5,temp6,temp7,
   * cell1,cell2,...,cell21,
-  * tank_temp
+  * tank_temp,iso_n,iso_p
   *
   * Tum degerler ham integer olarak gonderilir.
   * Telemetri karti (Cavli) bu degerleri alip gerekli bolmeleri yaparak
   * JSON formatina cevirir ve MQTT ile web arayuzune iletir.
   */
 void Send_Telemetry_USART6(void) {
-    char tx_buf[280];
-    // Gecerli batarya sicaklik indeksleri (indeks 5 bos, atlaniyor)
+    char tx_buf[320];
     uint8_t t_idx[] = {0, 1, 2, 3, 4, 6, 7};
-    // Kalan enerji hesabi
     uint16_t energy = g_pack_voltage * 21;
     int len = snprintf(tx_buf, sizeof(tx_buf),
         "%d,%d,%d,%d,%d,%d,%d,"
         "%d,%d,%d,%d,%d,%d,%d,"
         "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-        "%d\n",
+        "%d,%lu,%lu\n",
         speed, g_pack_voltage, g_pack_current, g_pack_soc, energy, g_spi_comm_ok, g_inverter_status,
         g_temperatures[t_idx[0]], g_temperatures[t_idx[1]], g_temperatures[t_idx[2]], g_temperatures[t_idx[3]],
         g_temperatures[t_idx[4]], g_temperatures[t_idx[5]], g_temperatures[t_idx[6]],
@@ -143,7 +149,9 @@ void Send_Telemetry_USART6(void) {
         g_cell_voltages[12], g_cell_voltages[13], g_cell_voltages[14], g_cell_voltages[15],
         g_cell_voltages[16], g_cell_voltages[17], g_cell_voltages[18], g_cell_voltages[19],
         g_cell_voltages[20],
-        g_tank_temp  // 36. alan: Tank sicakligi (sabit, ileride CAN'dan baglanacak)
+        g_tank_temp,
+        (unsigned long)g_iso_n,   // 37. alan: Izolasyon direnci N (ohm)
+        (unsigned long)g_iso_p    // 38. alan: Izolasyon direnci P (ohm)
     );
     if (len > 0 && len < (int)sizeof(tx_buf)) {
         HAL_UART_Transmit(&huart6, (uint8_t*)tx_buf, len, 100);
@@ -159,18 +167,22 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
         {
             uint32_t id = RxHeader.StdId;
-            g_last_can_rx_ms = HAL_GetTick();
-            g_can_connected = 1;
             if (id == 0x100) {
+            	 g_last_can_rx_ms_bms = HAL_GetTick();
+            	            g_can_connected_bms = 1;
                 g_pack_voltage = (RxData[0] << 8) | RxData[1];
                 g_pack_current = (int16_t)((RxData[2] << 8) | RxData[3]);
                 g_pack_soc = (RxData[4] << 8) | RxData[5];
             }
             else if (id == 0x101) {
+            	 g_last_can_rx_ms_bms = HAL_GetTick();
+            	            g_can_connected_bms = 1;
                 g_spi_comm_ok = (RxData[0] == 1) ? 0 : 1;
                 g_inverter_status = RxData[4]; // Vericiden gelen Inverter durumu (Byte 4)
             }
             else if (id >= 0x200 && id <= 0x20F) {
+            	 g_last_can_rx_ms_bms = HAL_GetTick();
+            	            g_can_connected_bms = 1;
                 uint8_t index = id - 0x200;
                 for (int i = 0; i < 4; i++) {
                     uint8_t cell_idx = (index * 4) + i;
@@ -181,6 +193,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
             }
             // SICAKLIK PAKETLERİ DÜZELTMESİ
             else if (id >= 0x300 && id <= 0x30F) {
+            	 g_last_can_rx_ms_bms = HAL_GetTick();
+            	            g_can_connected_bms = 1;
                 uint8_t index = id - 0x300;
                 for (int i = 0; i < 4; i++) {
                     uint8_t temp_idx = (index * 4) + i;
@@ -189,6 +203,12 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
                         g_temperatures[temp_idx] = val;
                     }
                 }
+            }
+            else if(id == 0x500){
+            	 g_last_can_rx_ms_iso = HAL_GetTick();
+            	            g_can_connected_iso = 1;
+                            g_iso_n = ((uint32_t)RxData[0] << 16) | ((uint32_t)RxData[1] << 8) | RxData[2];
+                            g_iso_p = ((uint32_t)RxData[3] << 16) | ((uint32_t)RxData[4] << 8) | RxData[5];
             }
             // TODO: Tank sicakligi icin CAN ID'si eklenecek
             // else if (id == 0xXXX) {
@@ -335,12 +355,16 @@ int main(void)
       if (now - last_fast_ms >= 200) {
           last_fast_ms = now;
           // Hiz hesapla (iki sensorun ortalamasi)
-          speed = (speed1 + speed2) / 2;
+          speed = speed1;
           Nextion_SetVal("n0", speed);
           // CAN bus koptu mu kontrolu (5000ms yani 5 saniye icinde yeni mesaj gelmediyse)
-          if (now - g_last_can_rx_ms > 5000) {
-              g_can_connected = 0;
+          if (now - g_last_can_rx_ms_bms > 5000) {
+              g_can_connected_bms = 0;
           }
+
+          if (now - g_last_can_rx_ms_iso > 5000) {
+                        g_can_connected_iso = 0;
+                    }
           // A. Hücre Gerilimi Kontrolü (2.6V = 2600mV)
           bool cell_undervoltage = false;
           for(int i = 0; i < 21; i++) {
@@ -361,13 +385,17 @@ int main(void)
               }
           }
           Nextion_SetVal("bt13", over_temp ? 1 : 0);
-          Nextion_SetVal("bt6", g_can_connected);               // CANbus aktiflik durumu
+          Nextion_SetVal("bt6", g_can_connected_bms);               // CANbus aktiflik durumu
+          Nextion_SetVal("bt9", g_can_connected_iso);               // CANbus aktiflik durumu
           Nextion_SetVal("x38", g_pack_soc);                    // SOC (%)
+          Nextion_SetVal("x39", g_tank_temp);                    // Tank Temp
           Nextion_SetVal("x2", g_pack_voltage);                 // Batarya Toplam Voltaj
           Nextion_SetVal("x0", (g_pack_voltage * 21));          // Kalan Enerji (Wh)
           Nextion_SetVal("x1", g_pack_current);                 // Batarya Akimi
           Nextion_SetVal("bt12", g_spi_comm_ok);                // BMS SPI Durumu
           Nextion_SetVal("bt15", g_inverter_status);            // Inverter / GPIO Cikis Durumu
+          Nextion_SetVal("n1", (int)g_iso_n);
+          Nextion_SetVal("n2", (int)g_iso_p);
           // === TELEMETRI KARTI: USART6 uzerinden veri gonder ===
           Send_Telemetry_USART6();
       }
@@ -568,7 +596,7 @@ static void MX_UART4_Init(void)
   /* USER CODE BEGIN UART4_Init 1 */
   /* USER CODE END UART4_Init 1 */
   huart4.Instance = UART4;
-  huart4.Init.BaudRate = 9600;
+  huart4.Init.BaudRate = 115200;
   huart4.Init.WordLength = UART_WORDLENGTH_8B;
   huart4.Init.StopBits = UART_STOPBITS_1;
   huart4.Init.Parity = UART_PARITY_NONE;
@@ -628,7 +656,7 @@ static void MX_USART6_UART_Init(void)
   /* USER CODE BEGIN USART6_Init 1 */
   /* USER CODE END USART6_Init 1 */
   huart6.Instance = USART6;
-  huart6.Init.BaudRate = 115200;
+  huart6.Init.BaudRate = 921600;
   huart6.Init.WordLength = UART_WORDLENGTH_8B;
   huart6.Init.StopBits = UART_STOPBITS_1;
   huart6.Init.Parity = UART_PARITY_NONE;
