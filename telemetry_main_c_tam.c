@@ -242,6 +242,7 @@ int main(void)
   Cavli_Send("AT+MQTTCONN=3,0");                   HAL_Delay(3000);
 
   uint32_t last_send_time = HAL_GetTick();
+  uint8_t send_phase = 0; // 0: Paket 1 (ana veriler), 1: Paket 2 (hucreler)
 
   /* USER CODE END 2 */
 
@@ -255,25 +256,61 @@ int main(void)
           vcu_line_ready = 0;
       }
 
-      // 2. ADIM: 1500ms dolduysa JSON oluştur ve gönder
-      if (HAL_GetTick() - last_send_time >= 1500) {
+      // 2. ADIM: 750ms arayla sirayla 2 paket gonder (toplam cevrim: 1500ms)
+      if (HAL_GetTick() - last_send_time >= 750) {
           last_send_time = HAL_GetTick();
 
-          char json_buf[192];
-          char tmp_v[16], tmp_a[16];
+          if (send_phase == 0) {
+              // === PAKET 1: Ana veriler + sicakliklar + durum ===
+              char json_buf[384];
+              char tmp_v[16], tmp_a[16], tmp_tk[16];
+              char tmp_t[7][16];
 
-          fmt_div10(tmp_v, (int16_t)t_bat_v);
-          fmt_div10(tmp_a, (int16_t)t_bat_a);
+              fmt_div10(tmp_v, (int16_t)t_bat_v);
+              fmt_div10(tmp_a, (int16_t)t_bat_a);
+              fmt_div10(tmp_tk, t_tank_temp);
 
-          int e_int = (int)(t_energy / 10);
-          int e_frac = abs((int)(t_energy % 10));
+              // 7 sicaklik degerini 10'a bol
+              for (int i = 0; i < 7; i++) {
+                  fmt_div10(tmp_t[i], t_temps[i]);
+              }
 
-          int len = snprintf(json_buf, sizeof(json_buf),
-              "{'speed':%d,'bat_v':%s,'bat_a':%s,'soc':%d,'energy':%d.%d,'iso_n':%lu,'iso_p':%lu}",
-              t_speed, tmp_v, tmp_a, t_soc, e_int, e_frac,
-              (unsigned long)t_iso_n, (unsigned long)t_iso_p);
+              int e_int = (int)(t_energy / 10);
+              int e_frac = abs((int)(t_energy % 10));
 
-          Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
+              int len = snprintf(json_buf, sizeof(json_buf),
+                  "{'speed':%d,'bat_v':%s,'bat_a':%s,'soc':%d,'energy':%d.%d,"
+                  "'bms_spi':%d,'motor_contact':%d,'tank_temp':%s,"
+                  "'iso_n':%lu,'iso_p':%lu,"
+                  "'bat_temp_1':%s,'bat_temp_2':%s,'bat_temp_3':%s,'bat_temp_4':%s,"
+                  "'bat_temp_5':%s,'bat_temp_6':%s,'bat_temp_7':%s}",
+                  t_speed, tmp_v, tmp_a, t_soc, e_int, e_frac,
+                  t_bms_spi, t_motor_contact, tmp_tk,
+                  (unsigned long)t_iso_n, (unsigned long)t_iso_p,
+                  tmp_t[0], tmp_t[1], tmp_t[2], tmp_t[3],
+                  tmp_t[4], tmp_t[5], tmp_t[6]);
+
+              Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
+              send_phase = 1;
+
+          } else {
+              // === PAKET 2: 21 hucre gerilimi ===
+              char json_buf[384];
+
+              int len = snprintf(json_buf, sizeof(json_buf),
+                  "{'c1':%d,'c2':%d,'c3':%d,'c4':%d,'c5':%d,'c6':%d,'c7':%d,"
+                  "'c8':%d,'c9':%d,'c10':%d,'c11':%d,'c12':%d,'c13':%d,'c14':%d,"
+                  "'c15':%d,'c16':%d,'c17':%d,'c18':%d,'c19':%d,'c20':%d,'c21':%d}",
+                  t_cells[0],  t_cells[1],  t_cells[2],  t_cells[3],
+                  t_cells[4],  t_cells[5],  t_cells[6],  t_cells[7],
+                  t_cells[8],  t_cells[9],  t_cells[10], t_cells[11],
+                  t_cells[12], t_cells[13], t_cells[14], t_cells[15],
+                  t_cells[16], t_cells[17], t_cells[18], t_cells[19],
+                  t_cells[20]);
+
+              Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
+              send_phase = 0;
+          }
       }
 
     /* USER CODE END WHILE */
