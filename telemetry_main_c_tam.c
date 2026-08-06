@@ -242,7 +242,7 @@ int main(void)
   Cavli_Send("AT+MQTTCONN=3,0");                   HAL_Delay(3000);
 
   uint32_t last_send_time = HAL_GetTick();
-  uint8_t send_phase = 0; // 0: Paket 1 (ana veriler), 1: Paket 2 (hucreler)
+  uint8_t send_counter = 0; // 0-4: ana paket, 5: hucre paketi
 
   /* USER CODE END 2 */
 
@@ -256,12 +256,12 @@ int main(void)
           vcu_line_ready = 0;
       }
 
-      // 2. ADIM: 750ms arayla sirayla 2 paket gonder (toplam cevrim: 1500ms)
-      if (HAL_GetTick() - last_send_time >= 750) {
+      // 2. ADIM: 500ms arayla gonder (5 ana paket + 1 hucre paketi = 3s cevrim)
+      if (HAL_GetTick() - last_send_time >= 500) {
           last_send_time = HAL_GetTick();
 
-          if (send_phase == 0) {
-              // === PAKET 1: Ana veriler + sicakliklar + durum ===
+          if (send_counter < 5) {
+              // === ANA PAKET: Hiz, batarya, sicakliklar, durum ===
               char json_buf[384];
               char tmp_v[16], tmp_a[16], tmp_tk[16];
               char tmp_t[7][16];
@@ -270,7 +270,6 @@ int main(void)
               fmt_div10(tmp_a, (int16_t)t_bat_a);
               fmt_div10(tmp_tk, t_tank_temp);
 
-              // 7 sicaklik degerini 10'a bol
               for (int i = 0; i < 7; i++) {
                   fmt_div10(tmp_t[i], t_temps[i]);
               }
@@ -291,10 +290,9 @@ int main(void)
                   tmp_t[4], tmp_t[5], tmp_t[6]);
 
               Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
-              send_phase = 1;
 
           } else {
-              // === PAKET 2: 21 hucre gerilimi ===
+              // === HUCRE PAKETI: 21 hucre gerilimi ===
               char json_buf[384];
 
               int len = snprintf(json_buf, sizeof(json_buf),
@@ -309,8 +307,10 @@ int main(void)
                   t_cells[20]);
 
               Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
-              send_phase = 0;
           }
+
+          send_counter++;
+          if (send_counter > 5) send_counter = 0;
       }
 
     /* USER CODE END WHILE */
