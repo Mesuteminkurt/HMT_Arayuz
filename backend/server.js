@@ -15,11 +15,28 @@ if (!fs.existsSync(csvDir)) {
     fs.mkdirSync(csvDir, { recursive: true });
 }
 
-// Kayıt durumu
+// Kayıt durumu (Manuel — kullanıcı başlatır/durdurur)
 let isRecording = false;
 let recordingStartTime = null;
 let currentCsvPath = null;
 let recordCount = 0;
+
+// ============================================================
+// OTOMATİK CSV KAYDI (Hidromobil Yarışma Formatı)
+// MQTT'den ilk veri geldiğinde otomatik başlar
+// Format: zaman_ms;hiz_kmh;T_bat_C;T_tank_C;V_bat_C;kalan_enerji_Wh
+// ============================================================
+const autoCsvDir = path.join(__dirname, 'csv_auto');
+if (!fs.existsSync(autoCsvDir)) {
+    fs.mkdirSync(autoCsvDir, { recursive: true });
+}
+
+const AUTO_CSV_HEADERS = 'zaman_ms;hiz_kmh;T_bat_C;T_tank_C;V_bat_C;kalan_enerji_Wh';
+let autoRecording = false;
+let autoRecordStartMs = null;   // Date.now() referans zamanı
+let autoCsvPath = null;
+let autoRecordCount = 0;
+let autoLastWriteMs = 0;        // Son yazma zamanı (5s kontrolü için)
 
 // Tüm telemetri alanları için CSV header
 const CSV_HEADERS = [
@@ -92,6 +109,19 @@ if (MQTT_PASSWORD) {
             const msgStr = message.toString().replace(/'/g, '"');
             const data = JSON.parse(msgStr);
             mqttLastMessage = new Date();
+
+            // === OTOMATİK CSV: İlk MQTT verisi geldiğinde başlat ===
+            if (!autoRecording) {
+                autoRecordStartMs = Date.now();
+                autoLastWriteMs = 0;
+                autoRecordCount = 0;
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const autoFileName = `hidromobil_${ts}.csv`;
+                autoCsvPath = path.join(autoCsvDir, autoFileName);
+                fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
+                autoRecording = true;
+                console.log(`📝 Otomatik CSV kaydı başladı: ${autoFileName}`);
+            }
             
             // Gelen veriyi currentData'ya aktar
             Object.keys(data).forEach(key => {
@@ -159,7 +189,7 @@ setInterval(() => {
         }
     }
 
-    // Kayıt aktifse CSV'ye yaz
+    // Manuel kayıt aktifse CSV'ye yaz
     if (isRecording && currentCsvPath) {
         const timeWithMs = `${now.toLocaleTimeString('tr-TR')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
         const formatDec = (val) => String(val).replace('.', ',');
@@ -177,7 +207,33 @@ setInterval(() => {
         fs.appendFileSync(currentCsvPath, row + '\n');
         recordCount++;
     }
-}, 2000);
+
+    // === OTOMATİK CSV KAYDI (Hidromobil Yarışma Formatı) ===
+    // MQTT'den veri geliyorsa ve kayıt aktifse, en fazla 5 saniye arayla yaz
+    if (autoRecording && autoCsvPath && dataSource === 'mqtt' && mqttConnected) {
+        const elapsedMs = Date.now() - autoRecordStartMs;
+
+        // İlk kayıt veya son yazımdan bu yana en fazla 5 saniye geçtiyse yaz
+        if (autoRecordCount === 0 || (elapsedMs - autoLastWriteMs) >= 1000) {
+            // Sıcaklık: bat_temp yoksa bat_temp_1 kullan (en yüksek)
+            const batTemp = currentData.bat_temp || currentData.bat_temp_1 || 0;
+            const tankTemp = currentData.tank_temp || 0;
+
+            const row = [
+                elapsedMs,
+                currentData.speed || 0,
+                batTemp,
+                tankTemp,
+                currentData.bat_v || 0,
+                currentData.energy || 0
+            ].join(';');
+
+            fs.appendFileSync(autoCsvPath, row + '\n');
+            autoLastWriteMs = elapsedMs;
+            autoRecordCount++;
+        }
+    }
+}, 1000);
 
 // Telemetri verileri
 app.get('/api/telemetry', (req, res) => res.json({
@@ -194,6 +250,16 @@ app.get('/api/mqtt-status', (req, res) => {
         broker: MQTT_BROKER,
         topic: MQTT_TOPIC,
         lastMessage: mqttLastMessage
+    });
+});
+
+// Otomatik CSV kayıt durumu
+app.get('/api/auto-recording-status', (req, res) => {
+    res.json({
+        autoRecording,
+        autoRecordCount,
+        elapsedMs: autoRecording ? Date.now() - autoRecordStartMs : 0,
+        fileName: autoCsvPath ? path.basename(autoCsvPath) : null
     });
 });
 
@@ -251,44 +317,68 @@ app.post('/api/recording/stop', (req, res) => {
     res.json(result);
 });
 
-// Kayıtlı CSV dosyalarını listele
+// Kayıtlı CSV dosyalarını listele (manuel + otomatik)
 app.get('/api/recordings', (req, res) => {
     try {
-        if (!fs.existsSync(csvDir)) {
-            return res.json({ files: [] });
+        const allFiles = [];
+
+        // Manuel kayıtlar (csv_records)
+        if (fs.existsSync(csvDir)) {
+            fs.readdirSync(csvDir)
+                .filter(f => f.endsWith('.csv'))
+                .forEach(f => {
+                    const filePath = path.join(csvDir, f);
+                    const stats = fs.statSync(filePath);
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    const lines = content.trim().split('\n').filter(l => l.trim());
+                    allFiles.push({
+                        name: f,
+                        type: 'manuel',
+                        size: stats.size,
+                        sizeFormatted: formatFileSize(stats.size),
+                        createdAt: stats.birthtime,
+                        rowCount: Math.max(0, lines.length - 1)
+                    });
+                });
         }
 
-        const files = fs.readdirSync(csvDir)
-            .filter(f => f.endsWith('.csv'))
-            .map(f => {
-                const filePath = path.join(csvDir, f);
-                const stats = fs.statSync(filePath);
-                const content = fs.readFileSync(filePath, 'utf-8');
-                const lines = content.trim().split('\n').filter(l => l.trim());
-                const rowCount = Math.max(0, lines.length - 1); // header hariç
+        // Otomatik kayıtlar (csv_auto)
+        if (fs.existsSync(autoCsvDir)) {
+            fs.readdirSync(autoCsvDir)
+                .filter(f => f.endsWith('.csv'))
+                .forEach(f => {
+                    const filePath = path.join(autoCsvDir, f);
+                    const stats = fs.statSync(filePath);
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    const lines = content.trim().split('\n').filter(l => l.trim());
+                    allFiles.push({
+                        name: f,
+                        type: 'auto',
+                        size: stats.size,
+                        sizeFormatted: formatFileSize(stats.size),
+                        createdAt: stats.birthtime,
+                        rowCount: Math.max(0, lines.length - 1)
+                    });
+                });
+        }
 
-                return {
-                    name: f,
-                    size: stats.size,
-                    sizeFormatted: formatFileSize(stats.size),
-                    createdAt: stats.birthtime,
-                    rowCount
-                };
-            })
-            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-        res.json({ files });
+        allFiles.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        res.json({ files: allFiles });
     } catch (e) {
         res.json({ files: [] });
     }
 });
 
-// CSV dosyasını indir
+// CSV dosyasını indir (her iki klasörü de kontrol et)
 app.get('/api/download-recording', (req, res) => {
     const fileName = req.query.file;
     if (!fileName) return res.status(400).json({ error: 'Dosya adı belirtilmedi' });
 
-    const filePath = path.join(csvDir, fileName);
+    // Önce manuel klasörde ara, yoksa otomatik klasörde ara
+    let filePath = path.join(csvDir, fileName);
+    if (!fs.existsSync(filePath)) {
+        filePath = path.join(autoCsvDir, fileName);
+    }
     if (fs.existsSync(filePath)) {
         res.download(filePath, fileName, (err) => {
             if (err && !res.headersSent) {
@@ -362,16 +452,24 @@ app.get('/api/recording/live-data', (req, res) => {
     }
 });
 
-// CSV dosyasını sil
+// CSV dosyasını sil (her iki klasörü de kontrol et)
 app.delete('/api/delete-recording', (req, res) => {
     const fileName = req.query.file;
     if (!fileName) return res.status(400).json({ error: 'Dosya adı belirtilmedi' });
 
-    const filePath = path.join(csvDir, fileName);
+    let filePath = path.join(csvDir, fileName);
+    if (!fs.existsSync(filePath)) {
+        filePath = path.join(autoCsvDir, fileName);
+    }
 
-    // Aktif kayıt dosyasını silmeye çalışıyorsa engelle
+    // Aktif manuel kayıt dosyasını silmeye çalışıyorsa engelle
     if (isRecording && currentCsvPath === filePath) {
-        return res.status(400).json({ error: 'Aktif kayıt dosyası silinemez. Önce kaydı durdurun.' });
+        return res.status(400).json({ error: 'Aktif manuel kayıt dosyası silinemez. Önce kaydı durdurun.' });
+    }
+
+    // Aktif otomatik kayıt dosyasını silmeye çalışıyorsa engelle
+    if (autoRecording && autoCsvPath === filePath) {
+        return res.status(400).json({ error: 'Aktif otomatik kayıt dosyası silinemez.' });
     }
 
     if (fs.existsSync(filePath)) {
