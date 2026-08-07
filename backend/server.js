@@ -63,20 +63,20 @@ const CSV_HEADERS = [
     'Tank_Sicaklik_C'
 ];
 
-// Simüle edilmiş canlı veriler
+// Başlangıç değerleri (Veri gelene kadar her şey 0)
 let currentData = {
-    bat_v: 96.5, bat_a: 12.4, soc: 88,
-    speed: 42, tank_temp: 22, energy: 2000.0, time: "",
+    bat_v: 0, bat_a: 0, soc: 0,
+    speed: 0, tank_temp: 0, energy: 0, time: "",
     // Uyarı alanları
     bms_spi: 0,         // 0 = haberleşme var, 1 = haberleşme yok
     motor_contact: 0,   // 1 = kontak açıldı, 0 = kontak kapalı
     // 32 adet hücre gerilimi
-    cell_v_1: 3.65, cell_v_2: 3.67, cell_v_3: 3.64, cell_v_4: 3.66,
-    cell_v_5: 3.68, cell_v_6: 3.63, cell_v_7: 3.65, cell_v_8: 3.67,
-    cell_v_9: 3.64, cell_v_10: 3.66, cell_v_11: 3.68, cell_v_12: 3.63,
-    cell_v_13: 3.65, cell_v_14: 3.67, cell_v_15: 3.64, cell_v_16: 3.66,
-    cell_v_17: 3.68, cell_v_18: 3.63, cell_v_19: 3.65, cell_v_20: 3.67,
-    cell_v_21: 3.64, cell_v_22: 0, cell_v_23: 0, cell_v_24: 0,
+    cell_v_1: 0, cell_v_2: 0, cell_v_3: 0, cell_v_4: 0,
+    cell_v_5: 0, cell_v_6: 0, cell_v_7: 0, cell_v_8: 0,
+    cell_v_9: 0, cell_v_10: 0, cell_v_11: 0, cell_v_12: 0,
+    cell_v_13: 0, cell_v_14: 0, cell_v_15: 0, cell_v_16: 0,
+    cell_v_17: 0, cell_v_18: 0, cell_v_19: 0, cell_v_20: 0,
+    cell_v_21: 0, cell_v_22: 0, cell_v_23: 0, cell_v_24: 0,
     cell_v_25: 0, cell_v_26: 0, cell_v_27: 0, cell_v_28: 0,
     cell_v_29: 0, cell_v_30: 0, cell_v_31: 0, cell_v_32: 0
 };
@@ -178,30 +178,11 @@ if (MQTT_PASSWORD) {
 }
 
 // ============================================================
-// SİMÜLASYON (MQTT bağlı değilken yedek veri üretir)
+// DÜZENLİ İŞLEMLER (Her saniye)
 // ============================================================
 setInterval(() => {
     const now = new Date();
     currentData.time = now.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' });
-
-    // MQTT bağlıysa simülasyon yapma, gerçek veriyi kullan
-    if (dataSource === 'mqtt' && mqttConnected) {
-        // Sadece CSV kaydı yap (gerçek MQTT verisiyle)
-    } else {
-        // Simülasyon modunda veri üret
-        currentData.speed = (Math.random() * 5 + 40).toFixed(1);
-        currentData.bat_v = (85 + Math.random() * 3).toFixed(1);
-        currentData.bat_a = (10 + Math.random() * 5).toFixed(1);
-        currentData.soc = Math.max(0, Math.min(100, Number(currentData.soc) - Math.random() * 0.1)).toFixed(0);
-        currentData.tank_temp = (21 + Math.random() * 2).toFixed(1);
-        currentData.energy = (Number(currentData.energy) - Math.random() * 0.5).toFixed(1);
-        currentData.bms_spi = 0;
-        currentData.motor_contact = 0;
-
-        for (let i = 1; i <= 21; i++) {
-            currentData[`cell_v_${i}`] = (3.55 + Math.random() * 0.2).toFixed(3);
-        }
-    }
 
     // Araç bağlantı kopma / kapanma kontrolü (Örn: Son veriden bu yana 6 saniye geçtiyse)
     let isVehicleOnline = true;
