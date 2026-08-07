@@ -203,8 +203,30 @@ setInterval(() => {
         }
     }
 
-    // Manuel kayıt aktifse CSV'ye yaz
-    if (isRecording && currentCsvPath) {
+    // Araç bağlantı kopma / kapanma kontrolü (Örn: Son veriden bu yana 6 saniye geçtiyse)
+    let isVehicleOnline = true;
+    if (dataSource === 'mqtt' && mqttConnected) {
+        if (mqttLastMessage && (Date.now() - mqttLastMessage.getTime() > 6000)) {
+            isVehicleOnline = false;
+        }
+    }
+
+    // Araç kapalıysa veya veri gelmiyorsa
+    if (!isVehicleOnline && dataSource === 'mqtt') {
+        // Eski verilerin arayüzde donup kalmaması için hareket/güç verilerini sıfırla
+        currentData.speed = 0;
+        currentData.bat_a = 0;
+
+        // Otomatik kaydı durdur (Böylece araç açılınca yepyeni dosya oluşur)
+        if (autoRecording) {
+            console.log(`⏹️ Veri akışı durdu, araç kapatıldı. Otomatik kayıt sonlandırıldı.`);
+            autoRecording = false;
+        }
+    }
+
+    // === MANUEL CSV KAYDI ===
+    // Sadece araç online ise (veya simülasyon ise) manuel dosyaya yazmaya devam et
+    if (isRecording && currentCsvPath && isVehicleOnline) {
         const timeWithMs = `${now.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}.${String(now.getMilliseconds()).padStart(3, '0')}`;
         const formatDec = (val) => String(val).replace('.', ',');
 
@@ -223,20 +245,14 @@ setInterval(() => {
     }
 
     // === OTOMATİK CSV KAYDI (Hidromobil Yarışma Formatı) ===
-    // MQTT'den veri geliyorsa ve kayıt aktifse, en fazla 5 saniye arayla yaz
-    if (autoRecording && dataSource === 'mqtt' && mqttConnected) {
-        // Araç bağlantı kopma / kapanma kontrolü (Son veriden bu yana 6 saniye geçtiyse)
-        if (mqttLastMessage && (Date.now() - mqttLastMessage.getTime() > 6000)) {
-            console.log(`⏹️ Veri akışı durdu, araç kapatıldı. Otomatik kayıt sonlandırıldı.`);
-            autoRecording = false;
-        } else if (autoCsvPath) {
-            const elapsedMs = Date.now() - autoRecordStartMs;
+    if (autoRecording && autoCsvPath && isVehicleOnline && dataSource === 'mqtt') {
+        const elapsedMs = Date.now() - autoRecordStartMs;
 
-            // İlk kayıt veya son yazımdan bu yana en fazla 5 saniye geçtiyse yaz
-            if (autoRecordCount === 0 || (elapsedMs - autoLastWriteMs) >= 1000) {
-                // Sıcaklık: bat_temp yoksa bat_temp_1 kullan (en yüksek)
-                const batTemp = currentData.bat_temp || currentData.bat_temp_1 || 0;
-                const tankTemp = currentData.tank_temp || 0;
+        // İlk kayıt veya son yazımdan bu yana en fazla 5 saniye geçtiyse yaz
+        if (autoRecordCount === 0 || (elapsedMs - autoLastWriteMs) >= 1000) {
+            // Sıcaklık: bat_temp yoksa bat_temp_1 kullan (en yüksek)
+            const batTemp = currentData.bat_temp || currentData.bat_temp_1 || 0;
+            const tankTemp = currentData.tank_temp || 0;
 
             const row = [
                 elapsedMs,
