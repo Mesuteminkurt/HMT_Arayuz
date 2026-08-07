@@ -194,9 +194,22 @@ setInterval(() => {
 
     // Araç kapalıysa veya veri gelmiyorsa
     if (!isVehicleOnline && dataSource === 'mqtt') {
-        // Eski verilerin arayüzde donup kalmaması için hareket/güç verilerini sıfırla
+        // Eski verilerin arayüzde donup kalmaması için tüm verileri sıfırla
         currentData.speed = 0;
         currentData.bat_a = 0;
+        currentData.bat_v = 0;
+        currentData.soc = 0;
+        currentData.tank_temp = 0;
+        currentData.energy = 0;
+        currentData.iso_n = 0;
+        currentData.iso_p = 0;
+        
+        for (let i = 1; i <= 21; i++) {
+            currentData[`cell_v_${i}`] = 0;
+        }
+        for (let i = 1; i <= 7; i++) {
+            currentData[`bat_temp_${i}`] = 0;
+        }
 
         // Otomatik kaydı durdur (Böylece araç açılınca yepyeni dosya oluşur)
         if (autoRecording) {
