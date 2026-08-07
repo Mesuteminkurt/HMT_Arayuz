@@ -21,6 +21,20 @@ let recordingStartTime = null;
 let currentCsvPath = null;
 let recordCount = 0;
 
+// Türkiye saati (GMT+3) için dosya ismi formatlayıcı
+function getTurkeyTimestamp(date = new Date()) {
+    const p = new Intl.DateTimeFormat('en-US', { 
+        timeZone: 'Europe/Istanbul', 
+        year: 'numeric', month: '2-digit', day: '2-digit', 
+        hour: '2-digit', minute: '2-digit', second: '2-digit', 
+        hour12: false 
+    }).formatToParts(date).reduce((acc, part) => { 
+        acc[part.type] = part.value; 
+        return acc; 
+    }, {});
+    return `${p.year}-${p.month}-${p.day}-${p.hour}-${p.minute}-${p.second}`;
+}
+
 // ============================================================
 // OTOMATİK CSV KAYDI (Hidromobil Yarışma Formatı)
 // MQTT'den ilk veri geldiğinde otomatik başlar
@@ -115,7 +129,7 @@ if (MQTT_PASSWORD) {
                 autoRecordStartMs = Date.now();
                 autoLastWriteMs = 0;
                 autoRecordCount = 0;
-                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const ts = getTurkeyTimestamp();
                 const autoFileName = `hidromobil_${ts}.csv`;
                 autoCsvPath = path.join(autoCsvDir, autoFileName);
                 fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
@@ -138,7 +152,7 @@ if (MQTT_PASSWORD) {
             });
             
             // Zamanı güncelle
-            currentData.time = new Date().toLocaleTimeString('tr-TR');
+            currentData.time = new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' });
 
             console.log(`📨 MQTT veri alındı: speed=${data.speed || '-'}, bat_v=${data.bat_v || '-'}, soc=${data.soc || '-'}`);
         } catch (err) {
@@ -168,7 +182,7 @@ if (MQTT_PASSWORD) {
 // ============================================================
 setInterval(() => {
     const now = new Date();
-    currentData.time = now.toLocaleTimeString('tr-TR');
+    currentData.time = now.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' });
 
     // MQTT bağlıysa simülasyon yapma, gerçek veriyi kullan
     if (dataSource === 'mqtt' && mqttConnected) {
@@ -191,11 +205,11 @@ setInterval(() => {
 
     // Manuel kayıt aktifse CSV'ye yaz
     if (isRecording && currentCsvPath) {
-        const timeWithMs = `${now.toLocaleTimeString('tr-TR')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+        const timeWithMs = `${now.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}.${String(now.getMilliseconds()).padStart(3, '0')}`;
         const formatDec = (val) => String(val).replace('.', ',');
 
         const row = [
-            now.toLocaleDateString('tr-TR'),
+            now.toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' }),
             timeWithMs,
             formatDec(currentData.speed),
             formatDec(currentData.bat_temp),
@@ -280,11 +294,11 @@ app.post('/api/recording/start', (req, res) => {
     }
 
     const now = new Date();
-    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const timestamp = getTurkeyTimestamp(now);
     const fileName = `telemetri_${timestamp}.csv`;
     currentCsvPath = path.join(csvDir, fileName);
     recordCount = 0;
-    recordingStartTime = now.toISOString();
+    recordingStartTime = now.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
 
     // Header satırını yaz
     // UTF-8 BOM + Header (Excel uyumluluğu için)
@@ -310,7 +324,7 @@ app.post('/api/recording/stop', (req, res) => {
         fileName: path.basename(currentCsvPath),
         totalRecords: recordCount,
         startTime: recordingStartTime,
-        endTime: new Date().toISOString()
+        endTime: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })
     };
 
     recordingStartTime = null;
