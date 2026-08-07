@@ -224,14 +224,19 @@ setInterval(() => {
 
     // === OTOMATİK CSV KAYDI (Hidromobil Yarışma Formatı) ===
     // MQTT'den veri geliyorsa ve kayıt aktifse, en fazla 5 saniye arayla yaz
-    if (autoRecording && autoCsvPath && dataSource === 'mqtt' && mqttConnected) {
-        const elapsedMs = Date.now() - autoRecordStartMs;
+    if (autoRecording && dataSource === 'mqtt' && mqttConnected) {
+        // Araç bağlantı kopma / kapanma kontrolü (Son veriden bu yana 6 saniye geçtiyse)
+        if (mqttLastMessage && (Date.now() - mqttLastMessage.getTime() > 6000)) {
+            console.log(`⏹️ Veri akışı durdu, araç kapatıldı. Otomatik kayıt sonlandırıldı.`);
+            autoRecording = false;
+        } else if (autoCsvPath) {
+            const elapsedMs = Date.now() - autoRecordStartMs;
 
-        // İlk kayıt veya son yazımdan bu yana en fazla 5 saniye geçtiyse yaz
-        if (autoRecordCount === 0 || (elapsedMs - autoLastWriteMs) >= 1000) {
-            // Sıcaklık: bat_temp yoksa bat_temp_1 kullan (en yüksek)
-            const batTemp = currentData.bat_temp || currentData.bat_temp_1 || 0;
-            const tankTemp = currentData.tank_temp || 0;
+            // İlk kayıt veya son yazımdan bu yana en fazla 5 saniye geçtiyse yaz
+            if (autoRecordCount === 0 || (elapsedMs - autoLastWriteMs) >= 1000) {
+                // Sıcaklık: bat_temp yoksa bat_temp_1 kullan (en yüksek)
+                const batTemp = currentData.bat_temp || currentData.bat_temp_1 || 0;
+                const tankTemp = currentData.tank_temp || 0;
 
             const row = [
                 elapsedMs,
