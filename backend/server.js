@@ -137,15 +137,32 @@ if (MQTT_PASSWORD) {
                 console.log(`📝 Otomatik CSV kaydı başladı: ${autoFileName}`);
             }
             
-            // Gelen veriyi currentData'ya aktar
+            // Gelen veriyi currentData'ya aktar (Kısaltmaları uzun isimlere çevir)
             Object.keys(data).forEach(key => {
-                // STM32'den "c1", "c2" gibi gelen hücre verilerini "cell_v_1" formatına çevir
                 if (key.startsWith('c') && !isNaN(key.substring(1))) {
-                    const cellIndex = key.substring(1);
-                    currentData[`cell_v_${cellIndex}`] = data[key];
+                    currentData[`cell_v_${key.substring(1)}`] = data[key];
+                } else if (key.startsWith('t') && !isNaN(key.substring(1))) {
+                    currentData[`bat_temp_${key.substring(1)}`] = data[key];
                 } else if (key === 'soc') {
-                    // SOC değeri 10x büyük geliyor (örn. 926 → 92.6)
                     currentData.soc = (Number(data[key]) / 10).toFixed(1);
+                } else if (key === 'spd') {
+                    currentData.speed = data[key];
+                } else if (key === 'v') {
+                    currentData.bat_v = data[key];
+                } else if (key === 'a') {
+                    currentData.bat_a = data[key];
+                } else if (key === 'e') {
+                    currentData.energy = data[key];
+                } else if (key === 'spi') {
+                    currentData.bms_spi = data[key];
+                } else if (key === 'mc') {
+                    currentData.motor_contact = data[key];
+                } else if (key === 'tt') {
+                    currentData.tank_temp = data[key];
+                } else if (key === 'in') {
+                    currentData.iso_n = data[key];
+                } else if (key === 'ip') {
+                    currentData.iso_p = data[key];
                 } else {
                     currentData[key] = data[key];
                 }
