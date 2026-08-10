@@ -152,9 +152,7 @@ if (MQTT_PASSWORD) {
                 } else if (key === 'e') {
                     currentData.energy = data[key];
                 } else if (key === 'spi') {
-                    // C kodunda (RxData[0] == 1) ? 0 : 1 şeklinde terslendiği için,
-                    // burada tekrar tersleyerek kartın asıl gönderdiği değere (0 = OK, 1 = Error) döndürüyoruz.
-                    currentData.bms_spi = data[key] == 1 ? 0 : 1;
+                    currentData.bms_spi = data[key];
                 } else if (key === 'mc') {
                     currentData.motor_contact = data[key];
                 } else if (key === 'tt') {
