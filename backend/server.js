@@ -54,14 +54,12 @@ let autoLastWriteMs = 0;        // Son yazma zamanı (5s kontrolü için)
 
 // Tüm telemetri alanları için CSV header
 const CSV_HEADERS = [
-    'Tarih',
-    'Zaman',
-    'Hiz_kmh',
-    'Bat_Sicaklik_C',
-    'Bat_Voltaj_V',
-    'Enerji_Wh',
-    'Tank_Sicaklik_C'
+    'Tarih', 'Zaman', 'Hiz_kmh', 'Bat_Sicaklik_Max_C', 'Bat_Voltaj_V', 'Bat_Akim_A',
+    'SOC_%', 'Hesaplanan_Enerji_Wh', 'Telemetri_Enerji_Wh', 'Tank_Sicaklik_C',
+    'BMS_SPI_Hata', 'Motor_Kontak', 'ISO_N', 'ISO_P'
 ];
+for (let i = 1; i <= 7; i++) CSV_HEADERS.push(`Bat_Sic_Sens_${i}_C`);
+for (let i = 1; i <= 32; i++) CSV_HEADERS.push(`Hucre_Gerilim_${i}_V`);
 
 // Başlangıç değerleri (Veri gelene kadar her şey 0)
 let currentData = {
@@ -253,15 +251,26 @@ setInterval(() => {
     if (isRecording && currentCsvPath && isVehicleOnline) {
         const timeWithMs = `${now.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}.${String(now.getMilliseconds()).padStart(3, '0')}`;
 
-        const row = [
+        const rowData = [
             now.toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' }),
             timeWithMs,
             formatDec(currentData.speed),
             formatDec(currentData.bat_temp),
             formatDec(currentData.bat_v),
-            formatDec((currentData.soc / 100 * 2840).toFixed(0)),
-            formatDec(currentData.tank_temp)
-        ].join(';');
+            formatDec(currentData.bat_a),
+            formatDec(currentData.soc),
+            formatDec((currentData.soc / 100 * 2840).toFixed(0)), // Hesaplanan_Enerji_Wh
+            formatDec(currentData.energy),
+            formatDec(currentData.tank_temp),
+            formatDec(currentData.bms_spi),
+            formatDec(currentData.motor_contact),
+            formatDec(currentData.iso_n),
+            formatDec(currentData.iso_p)
+        ];
+        for (let i = 1; i <= 7; i++) rowData.push(formatDec(currentData[`bat_temp_${i}`] || 0));
+        for (let i = 1; i <= 32; i++) rowData.push(formatDec(currentData[`cell_v_${i}`] || 0));
+
+        const row = rowData.join(';');
 
         fs.appendFileSync(currentCsvPath, row + '\n');
         recordCount++;
