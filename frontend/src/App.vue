@@ -126,17 +126,17 @@
 
             <!-- 3. BMS SPI -->
             <div class="status-card glass-card" :class="isBmsSpiOk ? 'status-ok' : 'status-alert'">
-              <div class="status-card-top">
+              <div class="status-card-header">
                 <div class="status-card-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                 </div>
                 <div class="status-badge" :class="isBmsSpiOk ? 'badge-success' : 'badge-danger'">
                   {{ isBmsSpiOk ? 'HABERLEŞME VAR' : 'HABERLEŞME YOK' }}
                 </div>
               </div>
               <div class="status-card-title">BMS SPI Bağlantısı</div>
-              <div class="status-card-value font-mono">
-                {{ isBmsSpiOk ? 'Haberleşme Aktif (0)' : 'Haberleşme Yok (1)' }}
+              <div class="status-card-val" :class="isBmsSpiOk ? 'text-success' : 'text-danger'">
+                {{ isBmsSpiOk ? 'Haberleşme Aktif (1)' : 'Haberleşme Yok (0)' }}
               </div>
               <div class="status-card-sub">Sinyal: {{ telemetry.bms_spi ?? 0 }}</div>
             </div>
@@ -412,7 +412,7 @@ const isBmsFanActive = computed(() => {
 });
 
 const isBmsSpiOk = computed(() => {
-  return Number(telemetry.value.bms_spi ?? 0) === 0;
+  return Number(telemetry.value.bms_spi ?? 1) === 1;
 });
 
 const isMotorContactOn = computed(() => {
