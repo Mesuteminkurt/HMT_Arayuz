@@ -167,10 +167,20 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
         if (Size >= VCU_BUF_SIZE) Size = VCU_BUF_SIZE - 1;
         vcu_rx_buf[Size] = '\0';
 
-        // Ana döngü müsaitse veriyi kopyala
-        if (vcu_line_ready == 0) {
-            strcpy(vcu_rx_buf_process, (char*)vcu_rx_buf);
-            vcu_line_ready = 1;
+        // --- PAKET DOĞRULAMA (KAYMAYI ÖNLEYEN KISIM) ---
+        int comma_count = 0;
+        for (int i = 0; i < Size; i++) {
+            if (vcu_rx_buf[i] == ',') {
+                comma_count++;
+            }
+        }
+
+        // 37 Virgül ve \n şartını sağlamayan bozuk paketler çöpe atılır
+        if (Size > 0 && vcu_rx_buf[Size - 1] == '\n' && comma_count == 37) {
+            if (vcu_line_ready == 0) {
+                strcpy(vcu_rx_buf_process, (char*)vcu_rx_buf);
+                vcu_line_ready = 1;
+            }
         }
 
         // DMA'yı bir sonraki paket için yeniden kur
@@ -230,19 +240,44 @@ int main(void)
   // 2. Modem UART (USART3) Kesme Başlatması
   HAL_UARTEx_ReceiveToIdle_IT(&huart3, (uint8_t*)cavli_status, STATUS_BUF_SIZE);
 
-  HAL_GPIO_WritePin(GPIOA, PWR_Pin, 1);
+  // --- CAVLI UYANDIRMA VE BOOT SÜRECİ ---
+  // Modemin ilk güç aldıktan sonra elektriksel olarak stabil olması için bekle
+  HAL_Delay(1000);
+
+  // Modemin RST pini ile donanımsal reset atılması (Soğuk açılışlarda kilitlenmeleri çözer)
+  HAL_GPIO_WritePin(RST_GPIO_Port, RST_Pin, GPIO_PIN_RESET);
   HAL_Delay(300);
+  HAL_GPIO_WritePin(RST_GPIO_Port, RST_Pin, GPIO_PIN_SET);
+  HAL_Delay(500);
+
+  // Power Key (PWRKEY) ile modemi tetikleme
+  // Hücresel modüller (Cavli, Quectel vb.) uyandırmak için PWR pinine 1-2 sn'lik bir pals (pulse) ister.
+  // Eski kodda pin 1 yapılıp bırakılıyordu, bu da tuşa sürekli basılı tutmak anlamına gelir.
+  HAL_GPIO_WritePin(GPIOA, PWR_Pin, GPIO_PIN_SET);
+  HAL_Delay(1500); // 1.5 saniye basılı tut
+  HAL_GPIO_WritePin(GPIOA, PWR_Pin, GPIO_PIN_RESET); // Bırak
+
+  // Modemin işletim sistemini yüklemesi ve AT komutlarına yanıt vermeye hazır hale gelmesi için bekle
+  HAL_Delay(4000);
 
   Cavli_Send("AT");                                HAL_Delay(500);
+  Cavli_Send("AT");                                HAL_Delay(500);
+
+  // Şebekeye (baz istasyonuna) tam bağlanması için ekstra süre
+  HAL_Delay(10000);
+
   Cavli_Send("ATE0");                              HAL_Delay(500);
   Cavli_Send("AT+CGDCONT=1,\"IP\",\"internet\"");  HAL_Delay(1000);
   Cavli_Send("AT+CGACT=1,1");                      HAL_Delay(3000);
   Cavli_Send("AT+MQTTCREATE=\"subutetrahmt2.cloud.shiftr.io\",1883,\"hmt_telemetry\",250,0,\"subutetrahmt2\",\"pPXOqugkEF24x0dH\",3,0");
   HAL_Delay(2000);
-  Cavli_Send("AT+MQTTCONN=3,0");                   HAL_Delay(3000);
+  Cavli_Send("AT+MQTTCONN=3,0");
+
+  // Shiftr.io'ya bağlandıktan sonra publish atmadan önce bekleme
+  HAL_Delay(5000);
 
   uint32_t last_send_time = HAL_GetTick();
-  uint8_t send_counter = 0; // 0-4: ana paket, 5: hucre paketi
+  uint8_t send_counter = 0; // 0-4: ana paket, 5-6: hucre paketleri
 
   /* USER CODE END 2 */
 
@@ -256,12 +291,12 @@ int main(void)
           vcu_line_ready = 0;
       }
 
-      // 2. ADIM: 500ms arayla gonder (5 ana paket + 1 hucre paketi = 3s cevrim)
+      // 2. ADIM: 500ms arayla gonder
       if (HAL_GetTick() - last_send_time >= 500) {
           last_send_time = HAL_GetTick();
 
           if (send_counter < 5) {
-              // === ANA PAKET: Hiz, batarya, sicakliklar, durum ===
+              // === ANA PAKET: (Karakter Limiti İçin Kısaltıldı) ===
               char json_buf[384];
               char tmp_v[16], tmp_a[16], tmp_tk[16];
               char tmp_t[7][16];
@@ -278,11 +313,10 @@ int main(void)
               int e_frac = abs((int)(t_energy % 10));
 
               int len = snprintf(json_buf, sizeof(json_buf),
-                  "{'speed':%d,'bat_v':%s,'bat_a':%s,'soc':%d,'energy':%d.%d,"
-                  "'bms_spi':%d,'motor_contact':%d,'tank_temp':%s,"
-                  "'iso_n':%lu,'iso_p':%lu,"
-                  "'bat_temp_1':%s,'bat_temp_2':%s,'bat_temp_3':%s,'bat_temp_4':%s,"
-                  "'bat_temp_5':%s,'bat_temp_6':%s,'bat_temp_7':%s}",
+                  "{'spd':%d,'v':%s,'a':%s,'soc':%d,'e':%d.%d,"
+                  "'spi':%d,'mc':%d,'tt':%s,"
+                  "'in':%lu,'ip':%lu,"
+                  "'t1':%s,'t2':%s,'t3':%s,'t4':%s,'t5':%s,'t6':%s,'t7':%s}",
                   t_speed, tmp_v, tmp_a, t_soc, e_int, e_frac,
                   t_bms_spi, t_motor_contact, tmp_tk,
                   (unsigned long)t_iso_n, (unsigned long)t_iso_p,
@@ -291,26 +325,32 @@ int main(void)
 
               Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
 
-          } else {
-              // === HUCRE PAKETI: 21 hucre gerilimi ===
+          } else if (send_counter == 5) {
+              // === HUCRE PAKETI 1 (1'den 11'e) (Karakter Limiti İçin Bölündü) ===
               char json_buf[384];
 
               int len = snprintf(json_buf, sizeof(json_buf),
-                  "{'c1':%d,'c2':%d,'c3':%d,'c4':%d,'c5':%d,'c6':%d,'c7':%d,"
-                  "'c8':%d,'c9':%d,'c10':%d,'c11':%d,'c12':%d,'c13':%d,'c14':%d,"
-                  "'c15':%d,'c16':%d,'c17':%d,'c18':%d,'c19':%d,'c20':%d,'c21':%d}",
+                  "{'c1':%d,'c2':%d,'c3':%d,'c4':%d,'c5':%d,'c6':%d,'c7':%d,'c8':%d,'c9':%d,'c10':%d,'c11':%d}",
                   t_cells[0],  t_cells[1],  t_cells[2],  t_cells[3],
                   t_cells[4],  t_cells[5],  t_cells[6],  t_cells[7],
-                  t_cells[8],  t_cells[9],  t_cells[10], t_cells[11],
-                  t_cells[12], t_cells[13], t_cells[14], t_cells[15],
-                  t_cells[16], t_cells[17], t_cells[18], t_cells[19],
-                  t_cells[20]);
+                  t_cells[8],  t_cells[9],  t_cells[10]);
+
+              Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
+
+          } else if (send_counter == 6) {
+              // === HUCRE PAKETI 2 (12'den 21'e) ===
+              char json_buf[384];
+
+              int len = snprintf(json_buf, sizeof(json_buf),
+                  "{'c12':%d,'c13':%d,'c14':%d,'c15':%d,'c16':%d,'c17':%d,'c18':%d,'c19':%d,'c20':%d,'c21':%d}",
+                  t_cells[11], t_cells[12], t_cells[13], t_cells[14], t_cells[15],
+                  t_cells[16], t_cells[17], t_cells[18], t_cells[19], t_cells[20]);
 
               Cavli_Publish("hmt_telemetry", (uint8_t*)json_buf, len);
           }
 
           send_counter++;
-          if (send_counter > 5) send_counter = 0;
+          if (send_counter > 6) send_counter = 0;
       }
 
     /* USER CODE END WHILE */
@@ -427,7 +467,7 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 921600;
+  huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
