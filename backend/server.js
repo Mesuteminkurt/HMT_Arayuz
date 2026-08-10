@@ -140,7 +140,7 @@ if (MQTT_PASSWORD) {
             // Gelen veriyi currentData'ya aktar (Kısaltmaları uzun isimlere çevir)
             Object.keys(data).forEach(key => {
                 if (key.startsWith('c') && !isNaN(key.substring(1))) {
-                    currentData[`cell_v_${key.substring(1)}`] = (Number(data[key]) / 100).toFixed(2);
+                    currentData[`cell_v_${key.substring(1)}`] = (Number(data[key]) / 1000).toFixed(3);
                 } else if (key.startsWith('t') && !isNaN(key.substring(1))) {
                     currentData[`bat_temp_${key.substring(1)}`] = data[key];
                 } else if (key === 'soc') {
