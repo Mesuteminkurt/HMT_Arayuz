@@ -123,6 +123,24 @@ if (MQTT_PASSWORD) {
             mqttLastMessage = new Date();
 
             if (topic === 'hmt_offline') {
+                // Eğer kayıt durmuşsa ama offline verisi geliyorsa, bu bir kopmadır! Eski dosyadan devam et.
+                if (!autoRecording) {
+                    if (autoCsvPath) {
+                        autoRecording = true;
+                        console.log(`♻️ Offline veri algılandı! Eski CSV dosyasına yazılmaya devam ediliyor: ${path.basename(autoCsvPath)}`);
+                    } else {
+                        autoRecordStartMs = Date.now();
+                        autoLastWriteMs = 0;
+                        autoRecordCount = 0;
+                        const ts = getTurkeyTimestamp();
+                        const autoFileName = `hidromobil_${ts}.csv`;
+                        autoCsvPath = path.join(autoCsvDir, autoFileName);
+                        fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
+                        autoRecording = true;
+                        console.log(`📝 Otomatik CSV kaydı başladı (Offline veri ile): ${autoFileName}`);
+                    }
+                }
+
                 if (autoRecording && autoCsvPath) {
                     const formatDec = (val) => String(val).replace(/\./g, ',');
                     const row = [
@@ -138,7 +156,8 @@ if (MQTT_PASSWORD) {
                 return; // Offline paketini sadece CSV'ye işliyoruz, anlık veriyi bozmuyoruz.
             }
 
-            // === OTOMATİK CSV: İlk MQTT verisi geldiğinde başlat ===
+            // === OTOMATİK CSV: İlk normal (hmt_telemetry) verisi geldiğinde başlat ===
+            // (Eğer hmt_offline gelmediyse ve kayıt durmuşsa, bu tamamen yeni bir sürüş/başlangıçtır)
             if (!autoRecording) {
                 autoRecordStartMs = Date.now();
                 autoLastWriteMs = 0;
