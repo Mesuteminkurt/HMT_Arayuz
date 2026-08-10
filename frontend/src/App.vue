@@ -136,11 +136,10 @@
               </div>
               <div class="status-card-title">BMS SPI Bağlantısı</div>
               <div class="status-card-val" :class="isBmsSpiOk ? 'text-success' : 'text-danger'">
-                {{ isBmsSpiOk ? 'Haberleşme Aktif (1)' : 'Haberleşme Yok (0)' }}
+                {{ isBmsSpiOk ? 'Haberleşme Aktif (0)' : 'Haberleşme Yok (1)' }}
               </div>
               <div class="status-card-sub">Sinyal: {{ telemetry.bms_spi ?? 0 }}</div>
             </div>
-
             <!-- 4. Motor Sürücü Kontak -->
             <div class="status-card glass-card" :class="isMotorContactOn ? 'status-active' : 'status-neutral'">
               <div class="status-card-top">

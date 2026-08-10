@@ -44,7 +44,7 @@ uint8_t RxData[8];
 volatile uint16_t g_pack_voltage = 0;
 volatile int16_t  g_pack_current = 0;
 volatile uint16_t g_pack_soc = 0;
-volatile uint8_t  g_spi_comm_ok = 1; // 1: Haberlesme Var, 0: Koptu
+volatile uint8_t  g_spi_comm_ok = 0; // 0: Haberlesme Var, 1: Koptu
 volatile uint8_t  g_inverter_status = 0; // Inverter (Cikis) Durumu (1: Aktif, 0: Pasif)
 volatile uint16_t g_cell_voltages[32] = {0};
 volatile int16_t  g_temperatures[32] = {0};
@@ -177,7 +177,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
             else if (id == 0x101) {
             	 g_last_can_rx_ms_bms = HAL_GetTick();
             	            g_can_connected_bms = 1;
-                g_spi_comm_ok = (RxData[0] == 1) ? 0 : 1;
+                g_spi_comm_ok = RxData[0]; // 0: Haberlesme Var (OK), 1: Hata (Koptu)
                 g_inverter_status = RxData[4]; // Vericiden gelen Inverter durumu (Byte 4)
             }
             else if (id >= 0x200 && id <= 0x20F) {
