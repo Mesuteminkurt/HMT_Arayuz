@@ -90,7 +90,7 @@ const MQTT_BROKER = 'mqtt://subutetrahmt2.cloud.shiftr.io:1883';
 const MQTT_USERNAME = 'subutetrahmt2';
 const MQTT_PASSWORD = 'pPXOqugkEF24x0dH';
 // İki topic'i de dinlemek için (telemetri ana verileri ve hücreler)
-const MQTT_TOPICS = ['hmt_telemetry', 'hmt_cells'];
+const MQTT_TOPICS = ['hmt_telemetry', 'hmt_cells', 'hmt_offline'];
 
 let mqttClient = null;
 
@@ -121,6 +121,22 @@ if (MQTT_PASSWORD) {
             const msgStr = message.toString().replace(/'/g, '"');
             const data = JSON.parse(msgStr);
             mqttLastMessage = new Date();
+
+            if (topic === 'hmt_offline') {
+                if (autoRecording && autoCsvPath) {
+                    const formatDec = (val) => String(val).replace(/\./g, ',');
+                    const row = [
+                        data.ms,
+                        formatDec(data.spd || 0),
+                        formatDec(data.tmax || 0),
+                        formatDec(data.tt || 0),
+                        formatDec(data.v || 0),
+                        formatDec(data.e || 0)
+                    ].join(';');
+                    fs.appendFileSync(autoCsvPath, row + '\n');
+                }
+                return; // Offline paketini sadece CSV'ye işliyoruz, anlık veriyi bozmuyoruz.
+            }
 
             // === OTOMATİK CSV: İlk MQTT verisi geldiğinde başlat ===
             if (!autoRecording) {
@@ -276,10 +292,10 @@ setInterval(() => {
 
     // === OTOMATİK CSV KAYDI (Hidromobil Yarışma Formatı) ===
     if (autoRecording && autoCsvPath && isVehicleOnline && dataSource === 'mqtt') {
-        const elapsedMs = Date.now() - autoRecordStartMs;
+        const elapsedMs = currentData.ms || 0;
 
-        // İlk kayıt veya son yazımdan bu yana en fazla 5 saniye geçtiyse yaz
-        if (autoRecordCount === 0 || (elapsedMs - autoLastWriteMs) >= 1000) {
+        // İlk kayıt, modemin resetlenmesi durumu veya son yazımdan bu yana 1 saniye geçtiyse yaz
+        if (autoRecordCount === 0 || elapsedMs < autoLastWriteMs || (elapsedMs - autoLastWriteMs) >= 1000) {
             // Sıcaklık: bat_temp yoksa bat_temp_1 kullan (en yüksek)
             const batTemp = currentData.bat_temp || currentData.bat_temp_1 || 0;
             const tankTemp = currentData.tank_temp || 0;
