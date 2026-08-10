@@ -140,7 +140,7 @@ if (MQTT_PASSWORD) {
             // Gelen veriyi currentData'ya aktar (Kısaltmaları uzun isimlere çevir)
             Object.keys(data).forEach(key => {
                 if (key.startsWith('c') && !isNaN(key.substring(1))) {
-                    currentData[`cell_v_${key.substring(1)}`] = data[key];
+                    currentData[`cell_v_${key.substring(1)}`] = (Number(data[key]) / 100).toFixed(2);
                 } else if (key.startsWith('t') && !isNaN(key.substring(1))) {
                     currentData[`bat_temp_${key.substring(1)}`] = data[key];
                 } else if (key === 'soc') {
@@ -235,11 +235,21 @@ setInterval(() => {
         }
     }
 
+    // Max batarya sıcaklığını hesapla
+    let maxBatTemp = -999;
+    for (let i = 1; i <= 7; i++) {
+        const t = Number(currentData[`bat_temp_${i}`] || 0);
+        if (t > 0 && t > maxBatTemp) maxBatTemp = t;
+    }
+    currentData.bat_temp = maxBatTemp !== -999 ? maxBatTemp : 0;
+
+    // Excel'in sayıları tarih sanmaması için noktayı virgüle çeviren fonksiyon
+    const formatDec = (val) => String(val).replace(/\./g, ',');
+
     // === MANUEL CSV KAYDI ===
     // Sadece araç online ise (veya simülasyon ise) manuel dosyaya yazmaya devam et
     if (isRecording && currentCsvPath && isVehicleOnline) {
         const timeWithMs = `${now.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}.${String(now.getMilliseconds()).padStart(3, '0')}`;
-        const formatDec = (val) => String(val).replace('.', ',');
 
         const row = [
             now.toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' }),
@@ -267,11 +277,11 @@ setInterval(() => {
 
             const row = [
                 elapsedMs,
-                currentData.speed || 0,
-                batTemp,
-                tankTemp,
-                currentData.bat_v || 0,
-                currentData.energy || 0
+                formatDec(currentData.speed || 0),
+                formatDec(batTemp),
+                formatDec(tankTemp),
+                formatDec(currentData.bat_v || 0),
+                formatDec(currentData.energy || 0)
             ].join(';');
 
             fs.appendFileSync(autoCsvPath, row + '\n');
