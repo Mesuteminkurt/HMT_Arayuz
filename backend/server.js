@@ -51,6 +51,7 @@ let autoRecordStartMs = null;   // Date.now() referans zamanı
 let autoCsvPath = null;
 let autoRecordCount = 0;
 let autoLastWriteMs = 0;        // Son yazma zamanı (5s kontrolü için)
+let autoLastMs = -1;            // Son gelen ms değeri (araç reset algılama için)
 
 // Tüm telemetri alanları için CSV header
 const CSV_HEADERS = [
@@ -123,22 +124,25 @@ if (MQTT_PASSWORD) {
             mqttLastMessage = new Date();
 
             if (topic === 'hmt_offline') {
-                // Eğer kayıt durmuşsa ama offline verisi geliyorsa, bu bir kopmadır! Eski dosyadan devam et.
+                // Offline veride de ms reset kontrolü
+                const offlineMs = Number(data.ms || 0);
+                if (autoRecording && autoLastMs >= 0 && offlineMs < autoLastMs) {
+                    console.log(`🔄 Offline veride araç reset algılandı! ms geri sardı: ${autoLastMs} → ${offlineMs}. Yeni CSV açılıyor...`);
+                    autoRecording = false;
+                }
+                autoLastMs = offlineMs;
+
+                // Eğer kayıt durmuşsa (reset veya ilk başlangıç), yeni CSV aç
                 if (!autoRecording) {
-                    if (autoCsvPath) {
-                        autoRecording = true;
-                        console.log(`♻️ Offline veri algılandı! Eski CSV dosyasına yazılmaya devam ediliyor: ${path.basename(autoCsvPath)}`);
-                    } else {
-                        autoRecordStartMs = Date.now();
-                        autoLastWriteMs = 0;
-                        autoRecordCount = 0;
-                        const ts = getTurkeyTimestamp();
-                        const autoFileName = `hidromobil_${ts}.csv`;
-                        autoCsvPath = path.join(autoCsvDir, autoFileName);
-                        fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
-                        autoRecording = true;
-                        console.log(`📝 Otomatik CSV kaydı başladı (Offline veri ile): ${autoFileName}`);
-                    }
+                    autoRecordStartMs = Date.now();
+                    autoLastWriteMs = 0;
+                    autoRecordCount = 0;
+                    const ts = getTurkeyTimestamp();
+                    const autoFileName = `hidromobil_${ts}.csv`;
+                    autoCsvPath = path.join(autoCsvDir, autoFileName);
+                    fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
+                    autoRecording = true;
+                    console.log(`📝 Otomatik CSV kaydı başladı (Offline veri ile): ${autoFileName}`);
                 }
 
                 if (autoRecording && autoCsvPath) {
@@ -156,8 +160,16 @@ if (MQTT_PASSWORD) {
                 return; // Offline paketini sadece CSV'ye işliyoruz, anlık veriyi bozmuyoruz.
             }
 
-            // === OTOMATİK CSV: İlk normal (hmt_telemetry) verisi geldiğinde başlat ===
-            // (Eğer hmt_offline gelmediyse ve kayıt durmuşsa, bu tamamen yeni bir sürüş/başlangıçtır)
+            // === OTOMATİK CSV: ms bazlı araç reset algılama ===
+            // Gelen ms değeri bir öncekinden küçükse → araç sayacı sıfırlanmış → yeni CSV aç
+            const incomingMs = Number(data.ms || 0);
+            if (autoRecording && autoLastMs >= 0 && incomingMs < autoLastMs) {
+                console.log(`🔄 Araç reset algılandı! ms geri sardı: ${autoLastMs} → ${incomingMs}. Yeni CSV açılıyor...`);
+                autoRecording = false; // Mevcut kayıt durdurulur, aşağıda yeni dosya açılacak
+            }
+            autoLastMs = incomingMs;
+
+            // İlk veri geldiğinde veya araç resetinden sonra yeni CSV başlat
             if (!autoRecording) {
                 autoRecordStartMs = Date.now();
                 autoLastWriteMs = 0;
@@ -265,6 +277,7 @@ setInterval(() => {
         if (autoRecording) {
             console.log(`⏹️ Veri akışı durdu, araç kapatıldı. Otomatik kayıt sonlandırıldı.`);
             autoRecording = false;
+            autoLastMs = -1;  // Timeout ile kapandığında ms takibini de sıfırla
         }
     }
 
