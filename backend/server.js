@@ -124,25 +124,33 @@ if (MQTT_PASSWORD) {
             mqttLastMessage = new Date();
 
             if (topic === 'hmt_offline') {
-                // Offline veride de ms reset kontrolü
+                // Offline veride ms reset kontrolü
                 const offlineMs = Number(data.ms || 0);
-                if (autoRecording && autoLastMs >= 0 && offlineMs < autoLastMs) {
+                const msReset = autoLastMs >= 0 && offlineMs < autoLastMs;
+                if (msReset) {
                     console.log(`🔄 Offline veride araç reset algılandı! ms geri sardı: ${autoLastMs} → ${offlineMs}. Yeni CSV açılıyor...`);
-                    autoRecording = false;
+                    autoCsvPath = null; // Yeni dosya açılmasını zorla
                 }
                 autoLastMs = offlineMs;
 
-                // Eğer kayıt durmuşsa (reset veya ilk başlangıç), yeni CSV aç
+                // Kayıt aktif değilse: ms devam ediyorsa aynı CSV'ye devam et, reset olduysa veya hiç yoksa yeni aç
                 if (!autoRecording) {
-                    autoRecordStartMs = Date.now();
-                    autoLastWriteMs = 0;
-                    autoRecordCount = 0;
-                    const ts = getTurkeyTimestamp();
-                    const autoFileName = `hidromobil_${ts}.csv`;
-                    autoCsvPath = path.join(autoCsvDir, autoFileName);
-                    fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
-                    autoRecording = true;
-                    console.log(`📝 Otomatik CSV kaydı başladı (Offline veri ile): ${autoFileName}`);
+                    if (autoCsvPath) {
+                        // ms devam ediyor, aynı CSV'ye devam et
+                        autoRecording = true;
+                        console.log(`♻️ Offline veri geldi, aynı CSV'ye devam ediliyor: ${path.basename(autoCsvPath)}`);
+                    } else {
+                        // İlk başlangıç veya ms reset sonrası: yeni CSV aç
+                        autoRecordStartMs = Date.now();
+                        autoLastWriteMs = 0;
+                        autoRecordCount = 0;
+                        const ts = getTurkeyTimestamp();
+                        const autoFileName = `hidromobil_${ts}.csv`;
+                        autoCsvPath = path.join(autoCsvDir, autoFileName);
+                        fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
+                        autoRecording = true;
+                        console.log(`📝 Otomatik CSV kaydı başladı (Offline veri ile): ${autoFileName}`);
+                    }
                 }
 
                 if (autoRecording && autoCsvPath) {
@@ -163,23 +171,31 @@ if (MQTT_PASSWORD) {
             // === OTOMATİK CSV: ms bazlı araç reset algılama ===
             // Gelen ms değeri bir öncekinden küçükse → araç sayacı sıfırlanmış → yeni CSV aç
             const incomingMs = Number(data.ms || 0);
-            if (autoRecording && autoLastMs >= 0 && incomingMs < autoLastMs) {
+            const msReset = autoLastMs >= 0 && incomingMs < autoLastMs;
+            if (msReset) {
                 console.log(`🔄 Araç reset algılandı! ms geri sardı: ${autoLastMs} → ${incomingMs}. Yeni CSV açılıyor...`);
-                autoRecording = false; // Mevcut kayıt durdurulur, aşağıda yeni dosya açılacak
+                autoCsvPath = null; // Yeni dosya açılmasını zorla
             }
             autoLastMs = incomingMs;
 
-            // İlk veri geldiğinde veya araç resetinden sonra yeni CSV başlat
+            // Kayıt aktif değilse: ms devam ediyorsa aynı CSV'ye devam et, reset olduysa veya hiç yoksa yeni aç
             if (!autoRecording) {
-                autoRecordStartMs = Date.now();
-                autoLastWriteMs = 0;
-                autoRecordCount = 0;
-                const ts = getTurkeyTimestamp();
-                const autoFileName = `hidromobil_${ts}.csv`;
-                autoCsvPath = path.join(autoCsvDir, autoFileName);
-                fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
-                autoRecording = true;
-                console.log(`📝 Otomatik CSV kaydı başladı: ${autoFileName}`);
+                if (autoCsvPath) {
+                    // Timeout sonrası veri geldi ama ms devam ediyor → aynı CSV'ye devam
+                    autoRecording = true;
+                    console.log(`♻️ Veri akışı devam ediyor, aynı CSV'ye yazılıyor: ${path.basename(autoCsvPath)}`);
+                } else {
+                    // İlk başlangıç veya ms reset sonrası: yeni CSV aç
+                    autoRecordStartMs = Date.now();
+                    autoLastWriteMs = 0;
+                    autoRecordCount = 0;
+                    const ts = getTurkeyTimestamp();
+                    const autoFileName = `hidromobil_${ts}.csv`;
+                    autoCsvPath = path.join(autoCsvDir, autoFileName);
+                    fs.writeFileSync(autoCsvPath, '\uFEFF' + AUTO_CSV_HEADERS + '\n');
+                    autoRecording = true;
+                    console.log(`📝 Otomatik CSV kaydı başladı: ${autoFileName}`);
+                }
             }
             
             // Gelen veriyi currentData'ya aktar (Kısaltmaları uzun isimlere çevir)
@@ -273,11 +289,12 @@ setInterval(() => {
             currentData[`bat_temp_${i}`] = 0;
         }
 
-        // Otomatik kaydı durdur (Böylece araç açılınca yepyeni dosya oluşur)
+        // Otomatik kaydı durdur ama CSV dosyasını ve ms takibini koru
+        // Böylece veri tekrar geldiğinde ms karşılaştırmasıyla aynı CSV'ye devam edebilir
         if (autoRecording) {
-            console.log(`⏹️ Veri akışı durdu, araç kapatıldı. Otomatik kayıt sonlandırıldı.`);
+            console.log(`⏹️ Veri akışı durdu. Kayıt duraklatıldı (ms takibi korunuyor, autoLastMs=${autoLastMs}).`);
             autoRecording = false;
-            autoLastMs = -1;  // Timeout ile kapandığında ms takibini de sıfırla
+            // autoLastMs ve autoCsvPath KORUNUYOR → veri gelince ms'e bakılacak
         }
     }
 
