@@ -208,7 +208,7 @@ if (MQTT_PASSWORD) {
                 } else if (key.startsWith('t') && !isNaN(key.substring(1))) {
                     currentData[`bat_temp_${key.substring(1)}`] = data[key];
                 } else if (key === 'soc') {
-                    currentData.soc = (Number(data[key]) / 100).toFixed(1);
+                    currentData.soc = (Number(data[key]) / 100).toFixed(2);
                 } else if (key === 'spd') {
                     currentData.speed = data[key];
                 } else if (key === 'v') {
