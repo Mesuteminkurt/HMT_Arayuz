@@ -372,6 +372,8 @@ const iconThermo = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const iconShield = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
 const iconCircle = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>';
 const iconBattery = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="16" height="10" rx="2"/><line x1="22" y1="11" x2="22" y2="13"/><line x1="7" y1="11" x2="11" y2="11"/><line x1="9" y1="9" x2="9" y2="13"/></svg>';
+const iconWave = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
+const iconCloud = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 19a4 4 0 01-2.83-6.83A6 6 0 0118 10.5h1.5A2.5 2.5 0 0122 13a3 3 0 01-3 3H8z"/></svg>';
 
 // Direnç değerini okunabilir birime çevir (örn. 10000000 → "10 MΩ", 100000 → "100 kΩ")
 function formatResistance(val) {
@@ -390,6 +392,8 @@ const cardItems = [
   { key:'bat_temp', label:'Batarya Sıcaklığı (Max)', unit:'°C', color:'#ef4444', icon:iconThermo },
   { key:'iso', label:'İzolasyon', color:'#a855f7', icon:iconShield, isDual: true, key1: 'iso_n', key2: 'iso_p', label1: 'n:', label2: 'p:', formatter: formatResistance },
   { key:'tank_temp', label:'Tank Sıcaklığı', unit:'°C', color:'#06b6d4', icon:iconThermo },
+  { key:'eys_current', label:'EYS Akım', unit:'mA', color:'#6366f1', icon:iconWave },
+  { key:'h2', label:'H2 Sensörü', unit:'ppm', color:'#f97316', icon:iconCloud },
 ];
 
 // 4 adet Sistem ve Uyarı durumu kontrolleri

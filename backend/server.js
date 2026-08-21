@@ -77,7 +77,10 @@ let currentData = {
     cell_v_17: 0, cell_v_18: 0, cell_v_19: 0, cell_v_20: 0,
     cell_v_21: 0, cell_v_22: 0, cell_v_23: 0, cell_v_24: 0,
     cell_v_25: 0, cell_v_26: 0, cell_v_27: 0, cell_v_28: 0,
-    cell_v_29: 0, cell_v_30: 0, cell_v_31: 0, cell_v_32: 0
+    cell_v_29: 0, cell_v_30: 0, cell_v_31: 0, cell_v_32: 0,
+    // EYS ve H2 değerleri
+    eys_current: 0,
+    h2: 0
 };
 
 // ============================================================
@@ -224,6 +227,10 @@ if (MQTT_PASSWORD) {
                     currentData.iso_n = data[key];
                 } else if (key === 'ip') {
                     currentData.iso_p = data[key];
+                } else if (key === 'eyc') {
+                    currentData.eys_current = data[key];
+                } else if (key === 'h2') {
+                    currentData.h2 = data[key];
                 } else {
                     currentData[key] = data[key];
                 }
@@ -281,6 +288,8 @@ setInterval(() => {
         currentData.energy = 0;
         currentData.iso_n = 0;
         currentData.iso_p = 0;
+        currentData.eys_current = 0;
+        currentData.h2 = 0;
         
         for (let i = 1; i <= 21; i++) {
             currentData[`cell_v_${i}`] = 0;
