@@ -78,7 +78,7 @@
               <span><span style="font-size: 0.55em; color: var(--text-muted); font-family: sans-serif; text-transform: lowercase; margin-right: 2px;">{{ item.label2 }}</span>{{ item.formatter ? item.formatter(telemetry[item.key2]) : (telemetry[item.key2] ?? '0.00') }}</span>
             </div>
             <div v-else class="tele-value font-mono">
-              {{ telemetry[item.key] ?? '--' }}<small class="tele-unit">{{ item.unit }}</small>
+              {{ item.formatter ? item.formatter(telemetry[item.key]) : (telemetry[item.key] ?? '--') }}<small class="tele-unit">{{ item.unit }}</small>
             </div>
             <div class="card-accent-line"></div>
           </div>
@@ -392,7 +392,7 @@ const cardItems = [
   { key:'bat_temp', label:'Batarya Sıcaklığı (Max)', unit:'°C', color:'#ef4444', icon:iconThermo },
   { key:'iso', label:'İzolasyon', color:'#a855f7', icon:iconShield, isDual: true, key1: 'iso_n', key2: 'iso_p', label1: 'n:', label2: 'p:', formatter: formatResistance },
   { key:'tank_temp', label:'Tank Sıcaklığı', unit:'°C', color:'#06b6d4', icon:iconThermo },
-  { key:'eys_current', label:'EYS Akım', unit:'mA', color:'#6366f1', icon:iconWave },
+  { key:'eys_current', label:'EYS Akım', unit:'A', color:'#6366f1', icon:iconWave, formatter: (v) => (Number(v || 0) / 1000).toFixed(2) },
   { key:'h2', label:'H2 Sensörü', unit:'ppm', color:'#f97316', icon:iconCloud },
 ];
 
